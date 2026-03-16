@@ -1,1118 +1,1682 @@
--- start lol so i don't cook this scripg
-
-local SAVE_FOLDER = "ADCHub"
-local KEY_FILE    = SAVE_FOLDER .. "/key.txt"
-local CFG_FILE    = SAVE_FOLDER .. "/ADCHubBD.json"
-
-if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
-
-local VALID_KEYS = { adchub1 = true }
-local keyPassed  = false
-
-if isfile(KEY_FILE) then
-    local saved = readfile(KEY_FILE):gsub("%s+", "")
-    if VALID_KEYS[saved] then keyPassed = true end
-end
-
-local Http = game:GetService("HttpService")
-
-local function loadConfig()
-    if not isfile(CFG_FILE) then return {} end
-    local ok, data = pcall(function() return Http:JSONDecode(readfile(CFG_FILE)) end)
-    return (ok and type(data) == "table") and data or {}
-end
-
-local function saveConfig(tbl)
-    pcall(function() writefile(CFG_FILE, Http:JSONEncode(tbl)) end)
-end
-
-local Config = loadConfig()
-
-local function cfgGet(key, default)
-    local v = Config[key]
-    if v == nil then return default end
-    return v
-end
-
-local function cfgSet(key, value)
-    Config[key] = value
-    saveConfig(Config)
-end
-
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-    Name                   = "ADC Hub",
-    Icon                   = 0,
-    LoadingTitle           = "ADC Hub",
-    LoadingSubtitle        = "Blood Debt",
-    Theme                  = "Default",
+    Name = "ADC Hub",
+    Icon = 0,
+    LoadingTitle = " ADC Blood Debt",
+    LoadingSubtitle = "by shiejrjene(Wobwoxhan) ",
+    Theme = "Default",
     DisableRayfieldPrompts = true,
-    DisableBuildWarnings   = true,
-    ConfigurationSaving    = { Enabled = false },
-    KeySystem              = not keyPassed,
-    KeySettings            = {
-        Title           = "ADC Hub",
-        Subtitle        = "Key System",
-        Note            = "Join the discord and get the key from the key channel!",
-        FileName        = "ADCHubBD",
-        SaveKey         = false,
-        GrabKeyFromSite = false,
-        Key             = {"adchub1"},
-    },
+    DisableBuildWarnings = true,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = ADC,
+        FileName = "ADCBloodDebtConfig"
+    }
 })
 
-if not keyPassed then
-    pcall(function() writefile(KEY_FILE, "adchub1") end)
-end
+local Tab = Window:CreateTab("Players", 4483345998)
 
-local _cfgApplying = true
+local nametagMode = "Role"
 
-local ESPTab     = Window:CreateTab("ESP",             "eye")
-local ItemESPTab = Window:CreateTab("Item ESP",        "package")
-local AimbotTab  = Window:CreateTab("Aimbot",          "crosshair")
-local MiscTab    = Window:CreateTab("Misc",            "settings")
+local ESPConfig = {
+    ShowHighlight = true,
+    ShowNametag = true,
+    ShowDistance = true,
+    ShowHealth = true,
+    FillTransparency = 0.5,
+    OutlineTransparency = 0,
+    NametagSize = UDim2.new(0, 140, 0, 24),
+    KillerColor = Color3.fromRGB(255, 0, 0),
+    VigilanteColor = Color3.fromRGB(0, 255, 255),
+    InnocentColor = Color3.fromRGB(0, 255, 0),
+    HintMatchColor = Color3.new(1, 1, 0),
+    VigilanteHintColor = Color3.fromRGB(128, 0, 128),
+    KillerHintColor = Color3.fromRGB(255, 165, 0),
+}
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
+local killerColor = ESPConfig.KillerColor
+local killerLabel = "KILLER"
+local innocentColor = ESPConfig.InnocentColor
+local innocentLabel = "INNOCENT"
+local vigilanteColor = ESPConfig.VigilanteColor
+local vigilanteLabel = "VIGILANTE"
+local hintMatchColor = ESPConfig.HintMatchColor
+local hintMatchLabel = "HINT MATCH"
+local vigilanteHintColor = ESPConfig.VigilanteHintColor
+local vigilanteHintLabel = "VIGILANTE + HINT MATCH"
+local killerHintColor = ESPConfig.KillerHintColor
+local killerHintLabel = "KILLER + HINT MATCH"
+
+local distanceThreshold = 30
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace         = game:GetService("Workspace")
-local CoreGui           = game:GetService("CoreGui")
+local lp = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local NPCSFolder = Workspace:WaitForChild("NPCSFolder")
+local BloodFolder = Workspace:WaitForChild("BloodFolder")
+local Camera = Workspace.CurrentCamera
 
-local lp          = Players.LocalPlayer
-local Camera       = Workspace.CurrentCamera
-local BloodFolder  = Workspace:FindFirstChild("BloodFolder")
+local espEnabled = false
+local stopEspLoop = false
+local espPlayerAddedConnection = nil
+local espCharacterAddedConnections = {}
+local rolesLockedByDistance = false
+local lockedDistanceRoles = {}
+local playersMatchingHints = {}
+local hintTextConnection = nil
+local firstVigilanteTracker = {}
+local playersWithStandardKillerWeapons = {}
+local droppedGunConnections = {}
+local playerRoles = {}
+local bulletRedirectionModes = {"Killer"}
 
--- weapon lists
--- killer = red, vigilante = blue, anything else = green
+local meleeEspEnabled = false
+local meleeEspConnections = {}
+local meleeHighlights = {}
 
 local killerWeapons = {
-    -- pistols
-    ["JS-2 Derringy"]              = true,
-    ["WISP"]                       = true,
-    ["Mooser"]                     = true,
-    ["K1911"]                      = true,
-    ["HW-K7"]                      = true,
-    ["HEARDBALLER"]                = true,
-    ["Kamatov"]                    = true,
-    ["ZT-33"]                      = true,
-    ["RR-LightCombatPistol(S)"]    = true,
-    ["RR-LightCompactPistolS"]     = true,
-    ["HWISHH-KP9"]                 = true,
-    ["FT100"]                      = true,
-    ["JSK-44"]                     = true,
-    ["RR-MARK2"]                   = true,
-    ["Bouquet"]                    = true,
-    ["JS-22"]                      = true,
-    ["AGM-22"]                     = true,
-    ["JS1 Competitor"]             = true,
-    ["JS1-Competitor"]             = true,
-    ["Door'bler"]                  = true,
-    ["Hammer 'n Bullet"]           = true,
-    ["Hammer n Bullet"]            = true,
-    ["Jolibri"]                    = true,
-    ["Fleet K51"]                  = true,
-    ["Bezzhummy"]                  = true,
-    ["Gisil-Pistole"]              = true,
-    ["1895-Rosey"]                 = true,
-    ["RR-Mark2"]                   = true,
-    ["MAK-1020"]                   = true,
-    -- smgs
-    ["ZZ-71"]                      = true,
-    ["TEKE-9"]                     = true,
-    ["ANKO-46"]                    = true,
-    ["KR7S"]                       = true,
-    ["MAK-10"]                     = true,
-    ["ZZ-90"]                      = true,
-    ["LUT-E KRUS"]                 = true,
-    ["LUT-E 'KRUS'"]               = true,
-    ["PPm-41"]                     = true,
-    ["SKORPION"]                   = true,
-    ["APZ"]                        = true,
-    ["Micro KZI"]                  = true,
-    -- rifles
-    ["PTRB-41"]                    = true,
-    ["JAVELIN-OBREZS"]             = true,
-    ["WHIZZ"]                      = true,
-    ["Whizz"]                      = true,
-    ["Rosen-Obrez"]                = true,
-    ["Daniqui-Obrez"]              = true,
-    ["Mare's Leg"]                 = true,
-    ["Mares Leg"]                  = true,
-    -- shotguns
-    ["Kensington"]                 = true,
-    ["JTS-225 Obrez"]              = true,
-    ["JTS225-Obrez"]               = true,
-    ["JTS225-OBREZ"]               = true,
-    ["Sawn-Off"]                   = true,
-    ["Sawn-off"]                   = true,
-    [".410 Bonds Derringy"]        = true,
-    ["JS2-BondsDerringy"]          = true,
-    ["Merretta 486 Palubu"]        = true,
-    ["Meretta486Palubu Sawn-Off"]  = true,
-    ["Mandols-5"]                  = true,
-    ["JS"]                         = true,
-    ["Thumpa"]                     = true,
-    ["THUMPA"]                     = true,
-    ["ZOZ-106"]                    = true,
-    -- juggernaut (red)
-    ["ZKMP"]                       = true,
-    ["KOLT-PSRL"]                  = true,
-    ["GGtastic"]                   = true,
-    ["GATR 05"]                    = true,
-    ["AT's K16A1"]                 = true,
-    ["AT's KAR15"]                 = true,
-    ["RY's GG-17"]                 = true,
-    ["VK's ANKM"]                  = true,
-    ["VA's ANKM"]                  = true,
-    ["RVK"]                        = true,
-    ["TG's ZVD"]                   = true,
-    ["TG's JAVELIN-ZVD"]           = true,
-    ["GZHG-7.62"]                  = true,
-    ["GZhG-7.62"]                  = true,
-    ["LORD 12.7"]                  = true,
-    ["Coach Shotgun"]              = true,
-    -- skins/variants of killer weapons
-    ["CharcoalSteel JS-22"]        = true,
-    ["Pretty Pink RR-LCP"]         = true,
-    ["GILDED"]                     = true,
-    ["JS2-Derringy"]               = true,
-    ["RR-LightCompactPistol"]      = true,
-    ["J9-Mereta"]                  = true,
-    ["RR-LCP"]                     = true,
-    ["KamatovS"]                   = true,
-    ["KamatovDRUM"]                = true,
-    ["Pretty Pink RVK"]            = true,
-    ["Clothed Sawn-off"]           = true,
-    ["Clothed Rosen-Obrez"]        = true,
-    ["GraySteel K1911"]            = true,
-    ["DarkSteel K1911"]            = true,
-    ["SilverSteel K1911"]          = true,
-    ["K1911GILDED"]                = true,
-    ["JS-22GILDED"]                = true,
-    ["Sawn-offGILDED"]             = true,
-    ["JTS225-ObrezGILDED"]         = true,
-    ["JS2-DerringyGILDED"]         = true,
-    ["Door'bler TIGERSTRIPES"]     = true,
-    ["Anatoly's JS-22"]            = true,
-    ["PLASTIC JS-22"]              = true,
-    ["HEARDBALLA"]                 = true,
-    ["Whiteout Rosen-Obrez"]       = true,
-    ["Whiteout RR-LCP"]            = true,
-    ["JTS225-Obrez Monochrome"]    = true,
-    ["JTS225-Obrez Poly"]          = true,
-    ["Sawn-off10"]                 = true,
-    ["Nikolai's 'Dented'"]         = true,
-    ["JS-44"]                      = true,
-    ["BandagePack"]                = true,
-    ["Mares Leg10"]                = true,
-    ["RR-LCP10"]                   = true,
-    ["JTS225-Obrez Partycannon"]   = true,
-    ["Bandages"]                   = true,
-    ["corrodedmetal JS-22"]        = true,
-    ["CharcoalSteel JS-44"]        = true,
-    ["SKORPION10"]                 = true,
-    ["Clothed SKORPION"]           = true,
-    ["CharcoalSteel SKORPION"]     = true,
-    ["Charcoal Steel SKORPION"]    = true,
-    ["Katya's 'Memories'"]         = true,
-    ["Dual SKORPS"]                = true,
-    ["RDG-2B"]                     = true,
-    ["Testament"]                  = true,
-    ["JAVELIN-OBREZS"]             = true,
-    ["AGM22"]                      = true,
-    ["Dual LCPs"]                  = true,
-    ["RR-LightCompactPistolS10"]   = true,
-    ["Wild Mandols-5"]             = true,
+    ["CharcoalSteel JS-22"] = true,
+    ["Pretty Pink RR-LCP"] = true,
+    ["JS2-BondsDerringy"] = true,
+    ["GILDED"] = true,
+    ["Kamatov"] = true,
+    ["JS2-Derringy"] = true,
+    ["JS-22"] = true,
+    ["RR-LightCompactPistolS"] = true,
+    ["J9-Mereta"] = true,
+    ["RY's GG-17"] = true,
+    ["RR-LCP"] = true,
+    ["Door'bler"] = true,
+    ["JS1-Competitor"] = true,
+    ["AT's KAR15"] = true,
+    ["VK's ANKM"] = true,
+    ["Clothed Sawn-off"] = true,
+    ["Sawn-off"] = true,
+    ["Clothed Rosen-Obrez"] = true,
+    ["Rosen-Obrez"] = true,
+    ["GraySteel K1911"] = true,
+    ["DarkSteel K1911"] = true,
+    ["SilverSteel K1911"] = true,
+    ["K1911"] = true,
+    ["ZZ-90"] = true,
+    ["SKORPION"] = true,
+    ["Mares Leg"] = true,
+    ["RR-LightCompactPistol"] = true,
+    ["KamatovS"] = true,
+    ["ChromeSlide Turqoise RR-LCP"] = true,
+    ["JS1-CYCLOPS"] = true,
+    ["THUMPA"] = true,
+    ["LUT-E 'KRUS'"] = true,
+    ["Memories"] = true,
+    ["Hammer n Bullet"] = true,
+    ["JS-22GILDED"] = true,
+    ["Sawn-offGILDED"] = true,
+    ["Door'bler TIGERSTRIPES"] = true,
+    ["Anatoly's JS-22"] = true,
+    ["PLASTIC JS-22"] = true,
+    ["JTS225-OBREZ"] = true,
+    ["HEARDBALLA"] = true,
+    ["Whiteout Rosen-Obrez"] = true,
+    ["Whiteout RR-LCP"] = true,
+    ["JTS225-Obrez Monochrome"] = true,
+    ["JTS225-Obrez"] = true,
+    ["Sawn-off10"] = true,
+    ["Nikolai's 'Dented'"] = true,
+    ["JS-44"] = true,
+    ["BandagePack"] = true,
+    ["JTS225-Obrez Poly"] = true,
+    ["Mares Leg10"] = true,
+    ["RR-LCP10"] = true,
+    ["JTS225-Obrez Partycannon"] = true,
+    ["Bandages"] = true,
+    ["corrodedmetal JS-22"] = true,
+    ["CharcoalSteel JS-44"] = true,
+    ["SKORPION10"] = true,
+    ["Meretta486Palubu Sawn-Off"] = true,
+    ["KamatovDRUM"] = true,
+    ["Micro KZI"] = true,
+    ["Whiteout RR-LightCompactPistolS"] = true,
+    ["Clothed SKORPION"] = true,
+    ["CharcoalSteel SKORPION"] = true,
+    ["Charcoal Steel SKORPION"] = true,
+    ["Katya's 'Memories'"] = true,
+    ["Dual SKORPS"] = true,
+    ["HWISSH-KP9"] = true,
+    ["JS2-DerringyGILDED"] = true,
+    ["K1911GILDED"] = true,
+    ["Mandols-5"] = true,
+    ["RDG-2B"] = true,
+    ["Testament"] = true,
+    ["Jolibri"] = true,
+    ["JAVELIN-OBREZS"] = true,
+    ["GZhG-7.62"] = true,
+    ["AGM22"] = true,
+    ["RR-Mark2"] = true,
+    ["Dual LCPs"] = true,
+    ["RR-LightCompactPistolS10"] = true,
+    ["Wild Mandols-5"] = true,
     ["AK47 Case Hardened 1000000"] = true,
-    ["Kensington20"]               = true,
-    ["Rosen Nagan"]                = true,
-    ["WISP Pearl"]                 = true,
-    ["SKORPION 'AMIRNOV"]          = true,
-    ["Memorial"]                   = true,
-    ["HW-K7"]                      = true,
-    ["RUZKH-12"]                   = true,
-    ["Mason's Machete"]            = true,
-    ["Skeleton Rosen-Obrez"]       = true,
-    ["Berf-JOLT"]                  = true,
-    ["K1911 'Memorial'"]           = true,
-    ["Casaro 91"]                  = true,
-    ["Memories"]                   = true,
+    ["Kensington20"] = true,
+    ["Kensington"] = true,
+    ["ZOZ-106"] = true,
+    ["Whizz"] = true,
+    ["Rosen Nagan"] = true,
+    ["WISP"] = true,
+    ["WISP Pearl"] = true,
+    ["MAK-1020"] = true,
+    ["SKORPION 'AMIRNOV"] = true,
+    ["PTRB-41"] = true,
+    ["Memorial"] = true,
+    ["Mooser"] = true,
+    ["VA's ANKM"] = true,
+    ["HW-K7"] = true,
+    ["TG's JAVELIN-ZVD"] = true,
+    ["KR7S"] = true,
+    ["RUZKH-12"] = true,
+    ["TEKE-9"] = true,
+    ["TG's JTS225"] = true,
+    ["Mason's Machete"] = true,
+    ["Pretty Pink RVK"] = true,
+    ["Comically Large Spoon"] = true,
+    ["Skeleton Rosen-Obrez"] = true,
+    ["Berf-JOLT"] = true,
+    ["1895-Rosey"] = true,
+    ["K1911 'Memorial'"] = true,
+    ["APZ"] = true,
+    ["JTS225-ObrezGILDED"] = true,
+    ["Casaro 91"] = true,
+    ["Bouquet"] = true,
+    ["ZT-33"] = true,
+    ["FT100"] = true,
+    ["JSK-44"] = true,
+    ["Fleet K51"] = true,
+    ["Bezzhummy"] = true,
+    ["Gisil-Pistole"] = true,
+    ["ZR-1"] = true,
+    ["ZZ-71"] = true,
+    ["KEDIR"] = true,
+    ["HW3"] = true,
+    ["HW-MPi5a4"] = true,
+    ["Tarakev-43"] = true,
+    ["IZVEKH-VITEX"] = true,
+    ["ZR-2"] = true,
+    ["ANKS-74U"] = true,
+    ["IZVEKH-BISEN"] = true,
+    ["JAVELIN-ZVD"] = true,
+    ["Blemington-700 Scoped"] = true,
+    ["KAR-15"] = true,
+    ["A86M2L-SW"] = true,
+    ["SAG STORM"] = true,
+    ["AMAR-15"] = true,
+    ["BF AAL"] = true,
+    ["CIR95"] = true,
+    ["Daniqui-Obrez"] = true,
+    ["A85L1"] = true,
+    ["ZKZ"] = true,
+    ["AN-J91"] = true,
+    ["MERSA-12"] = true,
+    [".410 Bonds Derringy"] = true,
+    ["Merretta 486 Palubu"] = true,
+    ["JS"] = true,
+    ["ZJ-23M"] = true,
+    ["Palico-37"] = true,
+    ["HUSHASH-12"] = true,
+    ["Coach Shotgun"] = true,
 }
 
 local vigilanteWeapons = {
-    -- pistols
-    ["GG-17"]                      = true,
-    ["IZVEKH-412"]                  = true,
-    ["J9-Meretta"]                 = true,
-    ["R&E Snubby"]                 = true,
-    ["RR-Snubby"]                  = true,
-    ["Beagle"]                     = true,
-    ["GG-26"]                      = true,
-    ["R&E M10"]                    = true,
-    ["HW-226"]                     = true,
-    ["HWISSH-226"]                 = true,
-    ["J9-M"]                       = true,
-    -- smgs
-    ["HW-MPi5k"]                   = true,
-    ["HW-M5K"]                     = true,
-    ["Auto180"]                    = true,
-    -- rifles
-    ["Mini Ranch Rifle"]           = true,
-    ["ZKZ-Obrez"]                  = true,
-    -- shotguns
-    ["JS-5A-OBREZ"]                = true,
-    ["JS-5A-Obrez"]                = true,
-    ["Shot-7"]                     = true,
-    -- politsiya (assigned blue)
-    ["ANKS-74U"]                   = true,
-    ["IZVEKH-BISEN"]               = true,
-    ["ZJ-23M"]                     = true,
-    ["ZOZ-194"]                    = true,
-    ["AN-J91"]                     = true,
-    -- skins/variants
-    ["GG-17 TAN"]                  = true,
-    ["GG-17GILDED"]                = true,
-    ["Pretty Pink GG-17"]          = true,
-    ["RR-SnubbyGILDED"]            = true,
-    ["Beagle TIGERSTRIPES"]        = true,
-    ["Paradise Beagle"]            = true,
-    ["SilverSteel RR-Snubby"]      = true,
-    ["ZKZ-Obrez10"]                = true,
-    ["Buxxberg-COMPACT"]           = true,
-    ["BUXXBERG-COMPACT"]           = true,
+    ["Beagle"] = true,
+    ["Beagle TIGERSTRIPES"] = true,
+    ["Paradise Beagle"] = true,
+    ["IZVEKH-412"] = true,
+    ["SilverSteel RR-Snubby"] = true,
+    ["RR-Snubby"] = true,
+    ["ZKZ-Obrez"] = true,
+    ["GG-17"] = true,
+    ["J9-M"] = true,
+    ["J9-Meretta"] = true,
+    ["Pretty Pink GG-17"] = true,
+    ["GG-17 TAN"] = true,
+    ["GG-17GILDED"] = true,
+    ["RR-SnubbyGILDED"] = true,
+    ["HWISSH-226"] = true,
+    ["ZKZ-Obrez10"] = true,
+    ["Buxxberg-COMPACT"] = true,
     ["Pretty Pink Buxxberg-COMPACT"] = true,
-    ["Dual Elites"]                = true,
-    ["RR-Snubby10"]                = true,
-    ["DRICO"]                      = true,
-    ["CharcoalSteel I412"]         = true,
-    ["GG-1720"]                    = true,
-    ["Dual GG-17s"]                = true,
-    ["Dual GG 17s"]                = true,
-    ["Clothed ZKZ-Obrez"]          = true,
-    ["Case Hardened DRICO"]        = true,
+    ["JS-5A-Obrez"] = true,
+    ["Dual Elites"] = true,
+    ["RR-Snubby10"] = true,
+    ["DRICO"] = true,
+    ["HW-M5K"] = true,
+    ["CharcoalSteel I412"] = true,
+    ["GG-1720"] = true,
+    ["Dual GG-17s"] = true,
+    ["Dual GG 17s"] = true,
+    ["Mini Ranch Rifle"] = true,
+    ["Clothed ZKZ-Obrez"] = true,
+    ["Case Hardened DRICO"] = true,
+    ["GG-26"] = true,
+    ["HW-226"] = true,
+    ["R&E M10"] = true,
+    ["Auto180"] = true,
+    ["Shot-7"] = true,
+    ["ZOZ-194"] = true,
 }
 
--- color presets
-local COLOR_PRESETS = {
-    ["Red"]     = Color3.fromRGB(220, 50,  50),
-    ["Blue"]    = Color3.fromRGB(50,  150, 220),
-    ["Green"]   = Color3.fromRGB(50,  220, 50),
-    ["Yellow"]  = Color3.fromRGB(255, 220, 0),
-    ["Orange"]  = Color3.fromRGB(255, 140, 0),
-    ["Purple"]  = Color3.fromRGB(180, 50,  220),
-    ["White"]   = Color3.fromRGB(255, 255, 255),
-    ["Cyan"]    = Color3.fromRGB(0,   220, 220),
+local specialKillerWeapons = {
+    ["RY's GG-17"] = true,
+    ["AT's KAR15"] = true,
+    ["VK's ANKM"] = true,
+    ["VA's ANKM"] = true,
+    ["RVK"] = true,
+    ["GZhG-7.62"] = true,
+    ["AK47 Case Hardened 1000000"] = true,
+    ["TG's JAVELIN-ZVD"] = true,
+    ["Mason's Machete"] = true,
+    ["Pretty Pink RVK"] = true,
+    ["AT's K16A1"] = true,
+    ["ZKMP"] = true,
+    ["KOLT-PSRL"] = true,
+    ["GGtastic"] = true,
+    ["PTRZ-41"] = true,
+    ["GATR 05"] = true,
+    ["TG's ZVD"] = true,
+    ["LORD 12.7"] = true,
 }
 
-local espColors = {
-    killer    = COLOR_PRESETS[cfgGet("KillerColor",    "Red")],
-    vigilante = COLOR_PRESETS[cfgGet("VigilanteColor", "Blue")],
-    innocent  = COLOR_PRESETS[cfgGet("InnocentColor",  "Green")],
+local specificJuggernautWeapons = {
+    ["AK47 Case Hardened 1000000"] = true,
+    ["RVK"] = true,
+    ["Pretty Pink RVK"] = true,
 }
 
-local function getWeaponRole(weaponName)
-    if killerWeapons[weaponName]    then return "Killer"    end
-    if vigilanteWeapons[weaponName] then return "Vigilante" end
-    return nil
-end
+local allRoleWeapons = {}
+for name, _ in pairs(killerWeapons) do allRoleWeapons[name] = true end
+for name, _ in pairs(vigilanteWeapons) do allRoleWeapons[name] = true end
 
-local function getPlayerWeapons(player)
-    -- returns a list of all weapon names (equipped + backpack)
-    local found = {}
-    local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA("Tool") then found[#found+1] = item.Name end
+local function getCharacterName(player)
+    if NPCSFolder then
+        local playerNPCModel = NPCSFolder:FindFirstChild(player.Name)
+        if playerNPCModel then
+            local charNameValue = playerNPCModel:FindFirstChild("CharacterName")
+                or playerNPCModel:FindFirstChild("NPCName")
+                or playerNPCModel:FindFirstChild("Name")
+            if charNameValue and charNameValue:IsA("StringValue") then
+                return charNameValue.Value
+            end
+            local configObject = playerNPCModel:FindFirstChild("Configuration")
+            if configObject then
+                local nameInConfig = configObject:FindFirstChild("CharacterName")
+                    or configObject:FindFirstChild("NPCName")
+                    or configObject:FindFirstChild("Name")
+                if nameInConfig and nameInConfig:IsA("StringValue") then
+                    return nameInConfig.Value
+                end
+            end
+            local humanoid = playerNPCModel:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.DisplayName ~= player.Name then
+                return humanoid.DisplayName
+            end
         end
     end
-    local bp = player:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then found[#found+1] = item.Name end
+    return player.Name
+end
+
+local function addNameTag(character, text, color, player)
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+    local oldTag = head:FindFirstChild("RoleBillboard")
+    if oldTag then oldTag:Destroy() end
+    if not ESPConfig.ShowNametag then return end
+
+    local displayText = text
+    if nametagMode == "Username" then
+        displayText = player.Name
+    elseif nametagMode == "Character Name" then
+        displayText = getCharacterName(player)
+    end
+
+    if ESPConfig.ShowDistance then
+        local localHRP = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local targetHRP = character:FindFirstChild("HumanoidRootPart")
+        if localHRP and targetHRP then
+            local dist = math.floor((localHRP.Position - targetHRP.Position).Magnitude)
+            displayText = displayText .. " [" .. dist .. "m]"
         end
     end
-    return found
-end
 
-local function getPlayerRole(player)
-    local weapons = getPlayerWeapons(player)
-    if #weapons == 0 then return "Innocent", nil end
-    -- killer takes priority over vigilante
-    for _, name in ipairs(weapons) do
-        if killerWeapons[name] then return "Killer", name end
+    if ESPConfig.ShowHealth then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            local hp = math.floor(humanoid.Health)
+            local maxHp = math.floor(humanoid.MaxHealth)
+            displayText = displayText .. "\n❤ " .. hp .. "/" .. maxHp
+        end
     end
-    for _, name in ipairs(weapons) do
-        if vigilanteWeapons[name] then return "Vigilante", name end
-    end
-    -- has a weapon but it's not in either list (team war etc) = innocent
-    return "Innocent", weapons[1]
-end
-
-local function getRoleColor(role)
-    if role == "Killer"    then return espColors.killer    end
-    if role == "Vigilante" then return espColors.vigilante end
-    return espColors.innocent
-end
-
--- ESP
-local espEnabled = false
-local espObjects = {}
-
-local function cleanupESP(player)
-    local obj = espObjects[player]
-    if not obj then return end
-    if obj.conn      then obj.conn:Disconnect()   end
-    if obj.highlight then obj.highlight:Destroy() end
-    if obj.billboard then obj.billboard:Destroy() end
-    espObjects[player] = nil
-end
-
-local function setupESP(player)
-    cleanupESP(player)
-    if not espEnabled or player == lp then return end
-
-    local char = player.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local hl = Instance.new("Highlight")
-    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.FillTransparency    = 0.5
-    hl.OutlineTransparency = 0
-    hl.Adornee             = char
-    hl.Parent              = CoreGui
 
     local bb = Instance.new("BillboardGui")
-    bb.Size        = UDim2.fromOffset(200, 44)
+    bb.Name = "RoleBillboard"
+    bb.Size = ESPConfig.NametagSize
     bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.Adornee = head
     bb.AlwaysOnTop = true
-    bb.MaxDistance = 1000
-    bb.Adornee     = hrp
-    bb.Parent      = CoreGui
+    bb.Parent = head
 
-    local lbl = Instance.new("TextLabel")
-    lbl.BackgroundTransparency = 1
-    lbl.Size                   = UDim2.fromScale(1, 1)
-    lbl.TextScaled             = false
-    lbl.TextSize               = 12
-    lbl.RichText               = true
-    lbl.Font                   = Enum.Font.GothamBold
-    lbl.TextStrokeTransparency = 0.35
-    lbl.TextColor3             = Color3.new(1, 1, 1)
-    lbl.Parent                 = bb
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    bg.BackgroundTransparency = 0.45
+    bg.BorderSizePixel = 0
+    bg.Parent = bb
 
-    local conn = RunService.RenderStepped:Connect(function()
-        if not char.Parent or hum.Health <= 0 then
-            hl.Enabled = false
-            bb.Enabled = false
-            return
-        end
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = bg
 
-        local role, weapon = getPlayerRole(player)
-        local color        = getRoleColor(role)
-        local dist         = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude)
-        local hp           = math.floor(hum.Health)
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, 3)
+    bar.Position = UDim2.new(0, 0, 0, 0)
+    bar.BackgroundColor3 = color
+    bar.BorderSizePixel = 0
+    bar.Parent = bb
 
-        hl.FillColor    = color
-        hl.OutlineColor = color
-        hl.Enabled      = true
-        bb.Enabled      = true
+    local barCorner = Instance.new("UICorner")
+    barCorner.CornerRadius = UDim.new(0, 2)
+    barCorner.Parent = bar
 
-        lbl.Text = string.format(
-            "<font size=\"11\"><b>[%s] %s</b></font>\n<font size=\"10\">%d hp  %d dist  %s</font>",
-            role,
-            player.Name,
-            hp,
-            dist,
-            weapon or "none"
-        )
-    end)
-
-    espObjects[player] = { highlight = hl, billboard = bb, conn = conn }
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = displayText
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0.1
+    label.TextStrokeColor3 = Color3.new(0, 0, 0)
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.Parent = bb
 end
 
-local function enableAllESP()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= lp and p.Character then setupESP(p) end
+local function clearOldStuff(character)
+    if not character then return end
+    local oldHighlight = character:FindFirstChild("RoleHighlight")
+    if oldHighlight and oldHighlight:IsA("Highlight") then
+        oldHighlight:Destroy()
+    end
+    local head = character:FindFirstChild("Head")
+    if head then
+        local tag = head:FindFirstChild("RoleBillboard")
+        if tag then tag:Destroy() end
     end
 end
 
-local function disableAllESP()
-    for p in pairs(espObjects) do cleanupESP(p) end
+local function clearDroppedGunEsp(gunTool)
+    if not gunTool then return end
+    local old = gunTool:FindFirstChildWhichIsA("Highlight")
+    if old then old:Destroy() end
 end
 
-for _, p in ipairs(Players:GetPlayers()) do
-    if p ~= lp then
-        p.CharacterAdded:Connect(function()
-            task.wait(0.2)
-            if espEnabled then setupESP(p) end
-        end)
-        p.AncestryChanged:Connect(function(_, parent)
-            if not parent then cleanupESP(p) end
-        end)
-    end
+local function addDroppedGunEsp(gunTool)
+    if not gunTool or not gunTool:IsA("Tool") then return end
+    clearDroppedGunEsp(gunTool)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "DroppedGunHighlight"
+    highlight.Adornee = gunTool
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = true
+    highlight.FillColor = Color3.fromRGB(255, 255, 0)
+    highlight.FillTransparency = 0.4
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.OutlineTransparency = 0
+    highlight.Parent = gunTool
 end
 
-Players.PlayerAdded:Connect(function(p)
-    if p == lp then return end
-    p.CharacterAdded:Connect(function()
-        task.wait(0.2)
-        if espEnabled then setupESP(p) end
-    end)
-    p.AncestryChanged:Connect(function(_, parent)
-        if not parent then cleanupESP(p) end
-    end)
-end)
-
-Players.PlayerRemoving:Connect(function(p) cleanupESP(p) end)
-
--- ESP tab ui
-ESPTab:CreateToggle({
-    Name         = "Enable ESP",
-    CurrentValue = cfgGet("ESPEnabled", false),
-    Flag         = "ESPEnabled",
-    Callback     = function(val)
-        cfgSet("ESPEnabled", val)
-        if _cfgApplying then return end
-        espEnabled = val
-        if val then enableAllESP() else disableAllESP() end
-    end,
-})
-
-ESPTab:CreateDropdown({
-    Name          = "Killer Color",
-    Options       = {"Red","Blue","Green","Yellow","Orange","Purple","White","Cyan"},
-    CurrentOption = {cfgGet("KillerColor", "Red")},
-    Flag          = "KillerColor",
-    Callback      = function(opt)
-        local choice = type(opt) == "table" and opt[1] or opt
-        cfgSet("KillerColor", choice)
-        if _cfgApplying then return end
-        espColors.killer = COLOR_PRESETS[choice] or COLOR_PRESETS["Red"]
-    end,
-})
-
-ESPTab:CreateDropdown({
-    Name          = "Vigilante Color",
-    Options       = {"Red","Blue","Green","Yellow","Orange","Purple","White","Cyan"},
-    CurrentOption = {cfgGet("VigilanteColor", "Blue")},
-    Flag          = "VigilanteColor",
-    Callback      = function(opt)
-        local choice = type(opt) == "table" and opt[1] or opt
-        cfgSet("VigilanteColor", choice)
-        if _cfgApplying then return end
-        espColors.vigilante = COLOR_PRESETS[choice] or COLOR_PRESETS["Blue"]
-    end,
-})
-
-ESPTab:CreateDropdown({
-    Name          = "Innocent Color",
-    Options       = {"Red","Blue","Green","Yellow","Orange","Purple","White","Cyan"},
-    CurrentOption = {cfgGet("InnocentColor", "Green")},
-    Flag          = "InnocentColor",
-    Callback      = function(opt)
-        local choice = type(opt) == "table" and opt[1] or opt
-        cfgSet("InnocentColor", choice)
-        if _cfgApplying then return end
-        espColors.innocent = COLOR_PRESETS[choice] or COLOR_PRESETS["Green"]
-    end,
-})
-
--- aimbot
-local AimbotConfig = {
-    enabled     = false,
-    hitChance   = 100,
-    wallCheck   = false,
-    fov         = 300,
-    fovVisible  = true,
-    targetParts = {"Head", "Torso", "HumanoidRootPart"},
-    targets     = {"Killer"},
-}
-
--- fov circle
-local fovCircle         = Drawing.new("Circle")
-fovCircle.Filled        = false
-fovCircle.NumSides      = 60
-fovCircle.Thickness     = 1.5
-fovCircle.Color         = Color3.new(1, 1, 1)
-
-RunService.RenderStepped:Connect(function()
-    local vp = Camera.ViewportSize
-    fovCircle.Radius   = AimbotConfig.fov
-    fovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
-    fovCircle.Visible  = AimbotConfig.fovVisible and AimbotConfig.enabled
-end)
-
--- sync valid targets every 0.5s so the actor payload can read them
-task.spawn(function()
-    while true do
-        local tbl = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= lp then
-                local role = getPlayerRole(p)
-                for _, targetRole in ipairs(AimbotConfig.targets) do
-                    if role == targetRole then tbl[p.Name] = true; break end
+local function updateDroppedGunEsp()
+    if not espEnabled or not BloodFolder then return end
+    for _, obj in ipairs(BloodFolder:GetChildren()) do
+        if obj:IsA("Tool") then
+            local weaponName = obj.Name
+            if killerWeapons[weaponName] or vigilanteWeapons[weaponName] or specialKillerWeapons[weaponName] then
+                addDroppedGunEsp(obj)
+                if not droppedGunConnections[obj] then
+                    droppedGunConnections[obj] = obj.AncestryChanged:Connect(function()
+                        if not obj.Parent then
+                            clearDroppedGunEsp(obj)
+                            droppedGunConnections[obj]:Disconnect()
+                            droppedGunConnections[obj] = nil
+                        end
+                    end)
                 end
             end
         end
-        local s = "{"
-        for name in pairs(tbl) do s = s .. '["' .. name .. '"]=true,' end
-        s = s .. "}"
-        getgenv().validTargets  = tbl
-        getgenv().aimbotEnabled = AimbotConfig.enabled
-        getgenv().hitChance     = AimbotConfig.hitChance
-        getgenv().wallCheck     = AimbotConfig.wallCheck
-        getgenv().radius        = AimbotConfig.fov
-        local pts = "{"
-        for i, p in ipairs(AimbotConfig.targetParts) do
-            pts = pts .. '"' .. p .. '"' .. (i == #AimbotConfig.targetParts and "" or ",")
+    end
+end
+
+local function clearAllDroppedGunEsp()
+    if BloodFolder then
+        for _, obj in BloodFolder:GetChildren() do
+            if obj:IsA("Tool") then clearDroppedGunEsp(obj) end
         end
-        pts = pts .. "}"
-        getgenv().targetParts = AimbotConfig.targetParts
-        task.wait(0.5)
+    end
+    for tool, conn in pairs(droppedGunConnections) do
+        if conn and conn.Connected then conn:Disconnect() end
+        droppedGunConnections[tool] = nil
+    end
+end
+
+local MeleesFolder = BloodFolder:WaitForChild("Melees")
+
+local function clearMeleeEsp(item)
+    if not item then return end
+    local old = item:FindFirstChild("MeleeHighlight")
+    if old then old:Destroy() end
+    meleeHighlights[item] = nil
+end
+
+local function addMeleeEsp(item)
+    if not item then return end
+    if meleeHighlights[item] then return end
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "MeleeHighlight"
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = true
+    highlight.FillColor = Color3.fromRGB(255, 140, 0)
+    highlight.FillTransparency = 0.3
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.OutlineTransparency = 0
+    highlight.Adornee = item
+    highlight.Parent = item
+    meleeHighlights[item] = highlight
+    if not meleeEspConnections[item] then
+        meleeEspConnections[item] = item.AncestryChanged:Connect(function()
+            if not item.Parent then
+                clearMeleeEsp(item)
+                if meleeEspConnections[item] then
+                    meleeEspConnections[item]:Disconnect()
+                    meleeEspConnections[item] = nil
+                end
+            end
+        end)
+    end
+end
+
+local function updateMeleeEsp()
+    if not meleeEspEnabled or not MeleesFolder then return end
+    for _, item in ipairs(MeleesFolder:GetChildren()) do
+        addMeleeEsp(item)
+    end
+end
+
+local function clearAllMeleeEsp()
+    for item, _ in pairs(meleeHighlights) do clearMeleeEsp(item) end
+    for item, conn in pairs(meleeEspConnections) do
+        if conn and conn.Connected then conn:Disconnect() end
+        meleeEspConnections[item] = nil
+    end
+    meleeHighlights = {}
+end
+
+MeleesFolder.ChildAdded:Connect(function(item)
+    if meleeEspEnabled then addMeleeEsp(item) end
+end)
+
+MeleesFolder.ChildRemoved:Connect(function(item)
+    clearMeleeEsp(item)
+    if meleeEspConnections[item] then
+        meleeEspConnections[item]:Disconnect()
+        meleeEspConnections[item] = nil
     end
 end)
 
--- payload injected into each gun's Actor
--- hooks RS.gun_res.lib.replicator bullet function
-local PAYLOAD = [[
-local cloneref      = cloneref or function(i) return i end
-local clonefunction = clonefunction or function(f) return f end
-local newcclosure   = newcclosure or clonefunction
+local function tagPlayer(player, roleColor, labelText)
+    if not player.Character then return end
+    clearOldStuff(player.Character)
+    if ESPConfig.ShowHighlight then
+        local highlight = Instance.new("Highlight", player.Character)
+        highlight.Name = "RoleHighlight"
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Enabled = true
+        highlight.FillColor = roleColor
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency = ESPConfig.FillTransparency
+        highlight.OutlineTransparency = ESPConfig.OutlineTransparency
+    end
+    if labelText then addNameTag(player.Character, labelText, roleColor, player) end
+end
 
-local RS        = cloneref(game:GetService("ReplicatedStorage"))
-local Players   = cloneref(game:GetService("Players"))
-local Workspace = game:GetService("Workspace")
-local lp        = Players.LocalPlayer
-local Camera    = Workspace.CurrentCamera
+local function collectPlayerTools(player)
+    local tools = {}
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then tools[tool.Name] = tool end
+        end
+    end
+    if player.Character then
+        for _, tool in ipairs(player.Character:GetChildren()) do
+            if tool:IsA("Tool") then tools[tool.Name] = tool end
+        end
+    end
+    if NPCSFolder then
+        local playerNPCModel = NPCSFolder:FindFirstChild(player.Name)
+        if playerNPCModel then
+            for _, child in ipairs(playerNPCModel:GetChildren()) do
+                if child:IsA("Tool") then tools[child.Name] = child end
+            end
+        end
+    end
+    return tools
+end
 
-if getgenv().aimbotEnabled == nil then getgenv().aimbotEnabled = false end
-if getgenv().hitChance     == nil then getgenv().hitChance     = 100   end
-if getgenv().wallCheck     == nil then getgenv().wallCheck     = false end
-if getgenv().radius        == nil then getgenv().radius        = 300   end
-if getgenv().targetParts   == nil then getgenv().targetParts   = {"Head","Torso","HumanoidRootPart"} end
-if getgenv().validTargets  == nil then getgenv().validTargets  = {}    end
+local function getStandardRoleFromWeapons(toolsByName)
+    for weaponName, _ in pairs(killerWeapons) do
+        if not specialKillerWeapons[weaponName] and toolsByName[weaponName] then
+            return "Killer", killerColor, killerLabel
+        end
+    end
+    for weaponName, _ in pairs(vigilanteWeapons) do
+        if toolsByName[weaponName] then
+            return "Vigilante", vigilanteColor, vigilanteLabel
+        end
+    end
+    return nil, nil, nil
+end
 
-local rayParams = RaycastParams.new()
-rayParams.FilterType  = Enum.RaycastFilterType.Exclude
-rayParams.IgnoreWater = true
+local function parseSingleHint(hintContent)
+    local hintType = "invalid"
+    local hintValue = nil
+    local cleanedContent = hintContent:match("^%s*(.-)%s*$") or ""
+    if string.len(cleanedContent) == 0 then return hintType, hintValue end
+    local taskMatch = cleanedContent:match("^Is often seen%s*(.*)$")
+    if taskMatch then
+        hintType = "task"
+        hintValue = taskMatch:match("^%s*(.-)%s*$")
+        return hintType, hintValue
+    end
+    local traitBracketMatch = cleanedContent:match("^%[.-%]$")
+    if traitBracketMatch then
+        local cleanClue = traitBracketMatch:gsub("[%[%]]", ""):match("^%s*(.-)%s*$") or ""
+        if string.len(cleanClue) > 0 and cleanClue:lower() ~= "assigned task" and cleanClue:lower() ~= "seen" then
+            hintType = "trait"
+            hintValue = cleanClue
+            return hintType, hintValue
+        end
+    end
+    if hintType == "invalid" then
+        hintType = "trait"
+        hintValue = cleanedContent
+    end
+    return hintType, hintValue
+end
 
-local function getTargetPart(origin)
-    local vp     = Camera.ViewportSize
-    local center = Vector2.new(vp.X / 2, vp.Y / 2)
-    local parts  = getgenv().targetParts
-    local valid  = getgenv().validTargets
-    local bestPos, bestW = nil, -math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= lp and valid[player.Name] then
-            local char = player.Character
-            if char then
-                local hum  = char:FindFirstChildOfClass("Humanoid")
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if hum and hum.Health > 0 and root then
-                    local targetPos
-                    for _, partName in ipairs(parts) do
-                        local p = char:FindFirstChild(partName)
-                        if p and p:IsA("BasePart") then
-                            targetPos = p.Position
-                            break
-                        end
-                    end
-                    if targetPos then
-                        local vPoint = Camera:WorldToViewportPoint(root.Position)
-                        if vPoint.Z >= 0 then
-                            local wallBlocked = false
-                            if getgenv().wallCheck then
-                                rayParams.FilterDescendantsInstances = { char, lp.Character }
-                                local hit = Workspace:Raycast(Camera.CFrame.Position, root.Position - Camera.CFrame.Position, rayParams)
-                                if hit then wallBlocked = true end
+local function updateMatchingHintPlayers()
+    playersMatchingHints = {}
+    local PlayerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+    if not PlayerGui then return end
+    local TargetHintLabel = PlayerGui:FindFirstChild("RESETONDEATHStatusGui") and PlayerGui.RESETONDEATHStatusGui:FindFirstChild("TARGETHINT")
+    if not TargetHintLabel or not TargetHintLabel:IsA("TextLabel") then return end
+    local hintText = TargetHintLabel.Text
+    if string.len(string.gsub(hintText, "%s", "")) == 0 then return end
+    local hintPrefix = "Hints : "
+    local lowerHintText = string.lower(hintText)
+    local lowerHintPrefix = string.lower(hintPrefix)
+    if lowerHintText:sub(1, string.len(lowerHintPrefix)) ~= lowerHintPrefix then return end
+    local actualHintContent = hintText:sub(string.len(hintPrefix) + 1):match("^%s*(.-)%s*$")
+    local individualHintParts = {}
+    local currentPos = 1
+    while currentPos <= string.len(actualHintContent) do
+        local nextPlus = string.find(actualHintContent, " + ", currentPos, true)
+        if nextPlus then
+            table.insert(individualHintParts, string.sub(actualHintContent, currentPos, nextPlus - 1))
+            currentPos = nextPlus + string.len(" + ")
+        else
+            table.insert(individualHintParts, string.sub(actualHintContent, currentPos))
+            currentPos = string.len(actualHintContent) + 1
+        end
+    end
+    if #individualHintParts == 0 and string.len(actualHintContent) > 0 then
+        table.insert(individualHintParts, actualHintContent)
+    end
+    local targetConditions = {}
+    for i, hintPartContent in ipairs(individualHintParts) do
+        local targetNumberMatch = hintPartContent:match("^%[%s*(%d+)%s*%]")
+        local targetNumber = tonumber(targetNumberMatch) or 1
+        local cleanedHintPartContent = hintPartContent:gsub("^%[%s*%d+%s*%]%s*", ""):match("^%s*(.-)%s*$") or ""
+        local hintType, hintValue = parseSingleHint(cleanedHintPartContent)
+        if hintType ~= "invalid" and hintValue and string.len(hintValue) > 0 then
+            if not targetConditions[targetNumber] then targetConditions[targetNumber] = {} end
+            table.insert(targetConditions[targetNumber], { type = hintType, value = hintValue })
+        end
+    end
+    if next(targetConditions) == nil then return end
+    if not NPCSFolder then return end
+    for _, player in Players:GetPlayers() do
+        if player ~= lp then
+            local playerNPCModel = NPCSFolder:FindFirstChild(player.Name)
+            if playerNPCModel then
+                local configObject = playerNPCModel:FindFirstChild("Configuration")
+                local playerMatchesAnyTarget = false
+                for targetNumber, conditionsForTarget in pairs(targetConditions) do
+                    local playerMatchesAllConditionsForTarget = true
+                    for i, condition in ipairs(conditionsForTarget) do
+                        local conditionMet = false
+                        if condition.type == "task" then
+                            local assignedTaskObject = playerNPCModel:FindFirstChild("AssignedTask")
+                            if assignedTaskObject and assignedTaskObject:IsA("StringValue") and assignedTaskObject.Value == condition.value then
+                                conditionMet = true
                             end
-                            if not wallBlocked then
-                                local sd = (Vector2.new(vPoint.X, vPoint.Y) - center).Magnitude
-                                if sd <= getgenv().radius then
-                                    local w = 1000 - sd
-                                    if w > bestW then
-                                        bestW   = w
-                                        bestPos = targetPos
+                        elseif condition.type == "trait" then
+                            if configObject then
+                                for _, configChild in ipairs(configObject:GetChildren()) do
+                                    if configChild:IsA("StringValue") and configChild.Value == condition.value then
+                                        conditionMet = true
+                                        break
                                     end
                                 end
                             end
                         end
+                        if not conditionMet then
+                            playerMatchesAllConditionsForTarget = false
+                            break
+                        end
+                    end
+                    if playerMatchesAllConditionsForTarget then
+                        playerMatchesAnyTarget = true
+                        break
+                    end
+                end
+                if playerMatchesAnyTarget then playersMatchingHints[player] = true end
+            end
+        end
+    end
+end
+
+local function connectHintTextSignal()
+    if hintTextConnection then
+        hintTextConnection:Disconnect()
+        hintTextConnection = nil
+    end
+    local PlayerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+    if not PlayerGui then return end
+    local statusGui = PlayerGui:WaitForChild("RESETONDEATHStatusGui", 20)
+    if not statusGui then return end
+    local TargetHintLabel = statusGui:WaitForChild("TARGETHINT", 10)
+    if not TargetHintLabel or not TargetHintLabel:IsA("TextLabel") then return end
+    hintTextConnection = TargetHintLabel:GetPropertyChangedSignal("Text"):Connect(updateMatchingHintPlayers)
+    updateMatchingHintPlayers()
+end
+
+local function detectRoles()
+    local everyoneHasGunConditionMet = false
+    local noOneHasGunConditionMet = false
+    local newHighestPriorityKillerDetected = false
+    local theSingleKillerGunHolder = nil
+    local specificJuggernautDetected = false
+    local theSpecificJuggernautHolder = nil
+    local specialKillerDetected = false
+    local playersWithSpecialWeapons = {}
+    local playersWithValidCharacters = {}
+    local playersWithoutAnyGun = {}
+    local playersWithAnyGun = {}
+    local playersWithVigilanteWeapons = {}
+    playersWithStandardKillerWeapons = {}
+    local vigilanteCount = 0
+    local killerGunHoldersCount = 0
+    local singleKillerGunHolderCandidate = nil
+
+    playerRoles = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= lp and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            playersWithValidCharacters[player] = true
+            local toolsByName = collectPlayerTools(player)
+            local hasAnyRoleWeapon = false
+            local hasVigilanteWeapon = false
+            local hasKillerWeapon = false
+            for name, tool in pairs(toolsByName) do
+                if specialKillerWeapons[name] then
+                    specialKillerDetected = true
+                    playersWithSpecialWeapons[player] = true
+                    if specificJuggernautWeapons[name] then
+                        specificJuggernautDetected = true
+                        theSpecificJuggernautHolder = player
+                    end
+                end
+                if allRoleWeapons[name] then hasAnyRoleWeapon = true end
+                if vigilanteWeapons[name] then
+                    hasVigilanteWeapon = true
+                    playersWithVigilanteWeapons[player] = true
+                end
+                if killerWeapons[name] then
+                    hasKillerWeapon = true
+                    if not specialKillerWeapons[name] then
+                        playersWithStandardKillerWeapons[player] = true
                     end
                 end
             end
-        end
-    end
-    return bestPos
-end
-
-local s, rep = pcall(require, RS.gun_res.lib.replicator)
-if not s or not rep then return end
-
-local bulletFn = rawget(rep, "bullet")
-if not bulletFn then return end
-
-local old; old = clonefunction(hookfunction(bulletFn, newcclosure(function(_, __, ___, ____, origin, endPoses, ...)
-    if getgenv().aimbotEnabled and math.random(1, 100) <= getgenv().hitChance then
-        local targetPos = getTargetPart(origin)
-        if targetPos then
-            local dir = (targetPos - origin).Unit
-            return old(_, __, ___, ____, origin, table.create(#endPoses, dir), ...)
-        end
-    end
-    return old(_, __, ___, ____, origin, endPoses, ...)
-end)))
-]]
-
--- inject payload into gun actor, retry until it sticks
-local injectedActors = {}
-
-local function injectActor(gun)
-    if not run_on_actor then return end
-    local actor = gun:FindFirstChild("Actor")
-    if not actor then return end
-    if injectedActors[actor] then return end
-
-    task.spawn(function()
-        local retries = 0
-        while retries < 100 do
-            if not actor.Parent then return end
-            local ok = pcall(run_on_actor, actor, PAYLOAD)
-            if ok then injectedActors[actor] = true; return end
-            retries += 1
-            task.wait(0.05)
-        end
-    end)
-end
-
-local function setupChar(char)
-    table.clear(injectedActors)
-    local function checkTool(child)
-        if child.ClassName == "Tool" then
-            local actor = child:FindFirstChild("Actor")
-            if actor and actor:FindFirstChild("weap_cl") then
-                injectActor(child)
+            if hasVigilanteWeapon then
+                vigilanteCount = vigilanteCount + 1
+                if firstVigilanteTracker[player] == nil then
+                    firstVigilanteTracker[player] = true
+                end
+            end
+            if hasKillerWeapon then
+                killerGunHoldersCount = killerGunHoldersCount + 1
+                singleKillerGunHolderCandidate = player
+            end
+            if not hasAnyRoleWeapon then
+                playersWithoutAnyGun[player] = true
+            else
+                playersWithAnyGun[player] = true
             end
         end
     end
-    char.ChildAdded:Connect(checkTool)
-    for _, child in ipairs(char:GetChildren()) do checkTool(child) end
+
+    if vigilanteCount == 1 and killerGunHoldersCount == 1 and singleKillerGunHolderCandidate then
+        newHighestPriorityKillerDetected = true
+        theSingleKillerGunHolder = singleKillerGunHolderCandidate
+        specialKillerDetected = false
+        specificJuggernautDetected = false
+        rolesLockedByDistance = false
+        lockedDistanceRoles = {}
+        if theSingleKillerGunHolder == lp then updateMatchingHintPlayers() end
+    end
+
+    local otherPlayersWithCharCount = 0
+    for player, _ in pairs(playersWithValidCharacters) do
+        if player ~= lp then otherPlayersWithCharCount = otherPlayersWithCharCount + 1 end
+    end
+
+    local allValidTargetsHaveGun = true
+    for player, _ in pairs(playersWithValidCharacters) do
+        if playersWithoutAnyGun[player] then
+            allValidTargetsHaveGun = false
+            break
+        end
+    end
+    if allValidTargetsHaveGun and otherPlayersWithCharCount > 0 then
+        everyoneHasGunConditionMet = true
+    end
+
+    local anyValidTargetHasGun = false
+    for player, _ in pairs(playersWithValidCharacters) do
+        if playersWithAnyGun[player] then
+            anyValidTargetHasGun = true
+            break
+        end
+    end
+    if not anyValidTargetHasGun and otherPlayersWithCharCount > 0 then
+        noOneHasGunConditionMet = true
+    end
+
+    local higherPriorityActive = newHighestPriorityKillerDetected or specificJuggernautDetected or specialKillerDetected
+
+    if higherPriorityActive or noOneHasGunConditionMet then
+        if rolesLockedByDistance then
+            rolesLockedByDistance = false
+            lockedDistanceRoles = {}
+        end
+    elseif everyoneHasGunConditionMet then
+        if not rolesLockedByDistance then
+            rolesLockedByDistance = true
+            lockedDistanceRoles = {}
+            local localHRP = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+            if localHRP then
+                for player, _ in pairs(playersWithValidCharacters) do
+                    local playerHRP = player.Character:FindFirstChild("HumanoidRootPart")
+                    if playerHRP then
+                        local distance = (localHRP.Position - playerHRP.Position).Magnitude
+                        if distance >= distanceThreshold then
+                            lockedDistanceRoles[player] = "Killer"
+                        else
+                            lockedDistanceRoles[player] = "Innocent"
+                        end
+                    end
+                end
+            else
+                rolesLockedByDistance = false
+                lockedDistanceRoles = {}
+                warn("distance lock failed, no hrp found")
+            end
+        end
+    end
+
+    updateMatchingHintPlayers()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if playersWithValidCharacters[player] then
+            if newHighestPriorityKillerDetected and player == theSingleKillerGunHolder then
+                playerRoles[player] = {label = killerLabel, color = killerColor}
+            elseif specificJuggernautDetected then
+                if player == theSpecificJuggernautHolder then
+                    playerRoles[player] = {label = killerLabel, color = killerColor}
+                else
+                    local toolsByName = collectPlayerTools(player)
+                    local hasAnyRoleWeapon = false
+                    for name, _ in pairs(toolsByName) do
+                        if allRoleWeapons[name] then hasAnyRoleWeapon = true break end
+                    end
+                    if hasAnyRoleWeapon then
+                        playerRoles[player] = {label = vigilanteLabel, color = vigilanteColor}
+                    else
+                        playerRoles[player] = {label = innocentLabel, color = innocentColor}
+                    end
+                end
+            elseif specialKillerDetected then
+                if playersWithSpecialWeapons[player] then
+                    playerRoles[player] = {label = killerLabel, color = killerColor}
+                elseif playersWithVigilanteWeapons[player] then
+                    playerRoles[player] = {label = vigilanteLabel, color = vigilanteColor}
+                else
+                    playerRoles[player] = {label = innocentLabel, color = innocentColor}
+                end
+            elseif rolesLockedByDistance then
+                local lockedRole = lockedDistanceRoles[player]
+                if lockedRole then
+                    if lockedRole == "Killer" then
+                        playerRoles[player] = {label = killerLabel, color = killerColor}
+                    elseif lockedRole == "Innocent" then
+                        playerRoles[player] = {label = innocentLabel, color = innocentColor}
+                    end
+                end
+            elseif playersMatchingHints[player] and playersWithVigilanteWeapons[player] then
+                playerRoles[player] = {label = vigilanteHintLabel, color = vigilanteHintColor}
+            elseif playersMatchingHints[player] and playersWithStandardKillerWeapons[player] then
+                playerRoles[player] = {label = killerHintLabel, color = killerHintColor}
+            elseif playersMatchingHints[player] and not playersWithStandardKillerWeapons[player] and not playersWithVigilanteWeapons[player] then
+                playerRoles[player] = {label = hintMatchLabel, color = hintMatchColor}
+            else
+                local toolsByName = collectPlayerTools(player)
+                local standardRole, standardColor, standardLabel = getStandardRoleFromWeapons(toolsByName)
+                if standardRole then
+                    playerRoles[player] = {label = standardLabel, color = standardColor}
+                else
+                    playerRoles[player] = {label = innocentLabel, color = innocentColor}
+                end
+            end
+        end
+    end
 end
 
-if lp.Character then setupChar(lp.Character) end
-lp.CharacterAdded:Connect(function(char)
-    task.wait(0.1)
-    setupChar(char)
+local function updateEspVisuals()
+    if not espEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= lp and player.Character then
+            local roleData = playerRoles[player]
+            if roleData then
+                tagPlayer(player, roleData.color, roleData.label)
+            else
+                clearOldStuff(player.Character)
+            end
+        elseif player.Character then
+            clearOldStuff(player.Character)
+        end
+    end
+    updateDroppedGunEsp()
+    updateMeleeEsp()
+end
+
+local function disableEsp()
+    if espEnabled then
+        espEnabled = false
+        stopEspLoop = true
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then clearOldStuff(player.Character) end
+        end
+        clearAllDroppedGunEsp()
+        clearAllMeleeEsp()
+        Rayfield:Notify({
+            Title = "esp off",
+            Content = "all visuals turned off",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+end
+
+local function tpToDroppedGun()
+    if not BloodFolder then
+        Rayfield:Notify({
+            Title = "error",
+            Content = "bloodfolder not found",
+            Duration = 5,
+            Image = 4483362458
+        })
+        return
+    end
+    local foundGun = false
+    for _, item in ipairs(BloodFolder:GetChildren()) do
+        if item:IsA("Tool") and (killerWeapons[item.Name] or vigilanteWeapons[item.Name] or specialKillerWeapons[item.Name]) then
+            local handle = item:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then
+                local targetPosition = handle.Position + Vector3.new(0, 5, 0)
+                if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+                    lp.Character:SetPrimaryPartCFrame(CFrame.new(targetPosition))
+                    foundGun = true
+                    break
+                else
+                    Rayfield:Notify({
+                        Title = "error",
+                        Content = "ur char aint ready yet",
+                        Duration = 5,
+                        Image = 4483362458
+                    })
+                    return
+                end
+            end
+        end
+    end
+    if not foundGun then
+        Rayfield:Notify({
+            Title = "no guns",
+            Content = "no valid guns on the ground rn",
+            Duration = 5,
+            Image = 4483362458
+        })
+    end
+end
+
+Tab:CreateDropdown({
+    Name = "nametag display mode",
+    Options = {"Role", "Username", "Character Name"},
+    CurrentOption = {"Role"},
+    MultipleOptions = false,
+    Flag = "NametagModeDropdown",
+    Callback = function(Option)
+        nametagMode = Option[1] or "Role"
+        if espEnabled then updateEspVisuals() end
+        Rayfield:Notify({
+            Title = "nametag mode",
+            Content = "now showing: " .. (Option[1] or "Role"),
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "show highlight",
+    CurrentValue = true,
+    Flag = "ESPHighlightToggle",
+    Callback = function(val)
+        ESPConfig.ShowHighlight = val
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "show nametag",
+    CurrentValue = true,
+    Flag = "ESPNametagToggle",
+    Callback = function(val)
+        ESPConfig.ShowNametag = val
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "show distance",
+    CurrentValue = true,
+    Flag = "ESPDistanceToggle",
+    Callback = function(val)
+        ESPConfig.ShowDistance = val
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "show health",
+    CurrentValue = true,
+    Flag = "ESPHealthToggle",
+    Callback = function(val)
+        ESPConfig.ShowHealth = val
+    end,
+})
+
+Tab:CreateSlider({
+    Name = "highlight fill transparency",
+    Range = {0, 10},
+    Increment = 1,
+    Suffix = "/10",
+    CurrentValue = 5,
+    Flag = "ESPFillTransSlider",
+    Callback = function(val)
+        ESPConfig.FillTransparency = val / 10
+    end,
+})
+
+Tab:CreateSlider({
+    Name = "highlight outline transparency",
+    Range = {0, 10},
+    Increment = 1,
+    Suffix = "/10",
+    CurrentValue = 0,
+    Flag = "ESPOutlineTransSlider",
+    Callback = function(val)
+        ESPConfig.OutlineTransparency = val / 10
+    end,
+})
+
+Tab:CreateColorPicker({
+    Name = "killer color",
+    Color = ESPConfig.KillerColor,
+    Flag = "KillerColorPicker",
+    Callback = function(val)
+        ESPConfig.KillerColor = val
+        killerColor = val
+    end,
+})
+
+Tab:CreateColorPicker({
+    Name = "vigilante color",
+    Color = ESPConfig.VigilanteColor,
+    Flag = "VigilanteColorPicker",
+    Callback = function(val)
+        ESPConfig.VigilanteColor = val
+        vigilanteColor = val
+    end,
+})
+
+Tab:CreateColorPicker({
+    Name = "innocent color",
+    Color = ESPConfig.InnocentColor,
+    Flag = "InnocentColorPicker",
+    Callback = function(val)
+        ESPConfig.InnocentColor = val
+        innocentColor = val
+    end,
+})
+
+Tab:CreateColorPicker({
+    Name = "hint match color",
+    Color = ESPConfig.HintMatchColor,
+    Flag = "HintColorPicker",
+    Callback = function(val)
+        ESPConfig.HintMatchColor = val
+        hintMatchColor = val
+    end,
+})
+
+Tab:CreateToggle({
+    Name = "show melee items",
+    CurrentValue = false,
+    Flag = "MeleeESPToggle",
+    Callback = function(val)
+        meleeEspEnabled = val
+        if val then
+            updateMeleeEsp()
+            Rayfield:Notify({
+                Title = "melee esp on",
+                Content = "highlighting stuff in bloodfolder.melees",
+                Duration = 3,
+                Image = 4483362458
+            })
+        else
+            clearAllMeleeEsp()
+            Rayfield:Notify({
+                Title = "melee esp off",
+                Content = "melee highlights cleared",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end,
+})
+
+Tab:CreateButton({
+    Name = "teleport to dropped gun",
+    Callback = function()
+        tpToDroppedGun()
+    end,
+})
+
+Tab:CreateButton({
+    Name = "enable esp",
+    Callback = function()
+        if not espEnabled then
+            espEnabled = true
+            stopEspLoop = false
+            task.spawn(function()
+                while espEnabled and not stopEspLoop do
+                    updateEspVisuals()
+                    task.wait(0.5)
+                end
+            end)
+            espPlayerAddedConnection = game.Players.PlayerAdded:Connect(function(player)
+                local charAddedConn = player.CharacterAdded:Connect(function(character)
+                    task.wait(0.1)
+                    updateEspVisuals()
+                end)
+                espCharacterAddedConnections[player] = charAddedConn
+                if player.Character then
+                    task.wait(0.1)
+                    updateEspVisuals()
+                end
+            end)
+            game.Players.PlayerRemoving:Connect(function(player)
+                if espCharacterAddedConnections[player] then
+                    if typeof(espCharacterAddedConnections[player]) == "RBXScriptConnection" then
+                        espCharacterAddedConnections[player]:Disconnect()
+                    end
+                    espCharacterAddedConnections[player] = nil
+                end
+                clearOldStuff(player.Character)
+            end)
+            updateEspVisuals()
+            Rayfield:Notify({
+                Title = "esp on",
+                Content = "role visuals turned on",
+                Duration = 3,
+                Image = 4483362458
+            })
+        else
+            Rayfield:Notify({
+                Title = "already on",
+                Content = "esp is already running bro",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end,
+})
+
+Tab:CreateButton({
+    Name = "disable esp",
+    Callback = function()
+        disableEsp()
+    end,
+})
+
+BloodFolder.ChildRemoved:Connect(function(child)
+    if child:IsA("Tool") then
+        clearDroppedGunEsp(child)
+        if droppedGunConnections[child] then
+            droppedGunConnections[child]:Disconnect()
+            droppedGunConnections[child] = nil
+        end
+    end
 end)
 
--- aimbot tab ui
-AimbotTab:CreateToggle({
-    Name         = "Silent Aim",
-    CurrentValue = cfgGet("AimbotEnabled", false),
-    Flag         = "AimbotEnabled",
-    Callback     = function(val)
-        cfgSet("AimbotEnabled", val)
-        if _cfgApplying then return end
-        AimbotConfig.enabled = val
-        getgenv().aimbotEnabled = val
-    end,
-})
+local AimbotTab = Window:CreateTab("Aimbot", 4483345998)
 
-AimbotTab:CreateSlider({
-    Name         = "Hit Chance",
-    Range        = {0, 100},
-    Increment    = 1,
-    Suffix       = "%",
-    CurrentValue = cfgGet("HitChance", 100),
-    Flag         = "HitChance",
-    Callback     = function(val)
-        cfgSet("HitChance", val)
-        if _cfgApplying then return end
-        AimbotConfig.hitChance = val
-        getgenv().hitChance = val
-    end,
-})
+local LocalAimbotConfig = {
+    HitChance = 100,
+    wallcheck = false,
+    TargetParts = { "Torso" },
+    radius = 150,
+    aimbotEnabled = true,
+    fovVisible = true
+}
 
-AimbotTab:CreateSlider({
-    Name         = "FOV Radius",
-    Range        = {50, 800},
-    Increment    = 5,
-    CurrentValue = cfgGet("FOVRadius", 300),
-    Flag         = "FOVRadius",
-    Callback     = function(val)
-        cfgSet("FOVRadius", val)
-        if _cfgApplying then return end
-        AimbotConfig.fov = val
-        getgenv().radius = val
-    end,
-})
+local run = run_on_actor or run_on_thread
+local availableActors = getactors or getactorthreads
+local AimbotActor = availableActors()[1]
 
-AimbotTab:CreateToggle({
-    Name         = "Show FOV Circle",
-    CurrentValue = cfgGet("FOVVisible", true),
-    Flag         = "FOVVisible",
-    Callback     = function(val)
-        cfgSet("FOVVisible", val)
-        if _cfgApplying then return end
-        AimbotConfig.fovVisible = val
-    end,
-})
-
-AimbotTab:CreateToggle({
-    Name         = "Wall Check",
-    CurrentValue = cfgGet("WallCheck", false),
-    Flag         = "WallCheck",
-    Callback     = function(val)
-        cfgSet("WallCheck", val)
-        if _cfgApplying then return end
-        AimbotConfig.wallCheck = val
-        getgenv().wallCheck = val
+AimbotTab:CreateDropdown({
+    Name = "bullet redirection targets",
+    Options = {"Killer", "Vigilante", "Innocent"},
+    CurrentOption = {"Killer"},
+    MultipleOptions = true,
+    Flag = "BulletRedirectionDropdown",
+    Callback = function(Options)
+        bulletRedirectionModes = Options
+        Rayfield:Notify({
+            Title = "targets changed",
+            Content = "now targeting: " .. table.concat(Options, ", "),
+            Duration = 3,
+            Image = 4483362458
+        })
     end,
 })
 
 AimbotTab:CreateDropdown({
-    Name            = "Target Roles",
-    Options         = {"Killer", "Vigilante", "Innocent"},
-    CurrentOption   = cfgGet("TargetRoles", {"Killer"}),
+    Name = "target part",
+    Options = {"Head", "Torso", "Left Leg", "Right Leg", "Left Arm", "Right Arm"},
+    CurrentOption = {"Torso"},
     MultipleOptions = true,
-    Flag            = "TargetRoles",
-    Callback        = function(opts)
-        cfgSet("TargetRoles", opts)
-        if _cfgApplying then return end
-        AimbotConfig.targets = opts
+    Flag = "TargetPartsDropdown",
+    Callback = function(Options)
+        LocalAimbotConfig.TargetParts = Options
+        local partsString = "{"
+        for i, p in ipairs(Options) do
+            partsString = partsString .. '"' .. p .. '"' .. (i == #Options and "" or ", ")
+        end
+        partsString = partsString .. "}"
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().TargetParts = %s", partsString))
+        end
     end,
 })
 
-AimbotTab:CreateDropdown({
-    Name            = "Target Part",
-    Options         = {"Head", "Torso", "HumanoidRootPart", "Left Arm", "Right Arm", "Left Leg", "Right Leg"},
-    CurrentOption   = cfgGet("TargetParts", {"Head", "Torso", "HumanoidRootPart"}),
-    MultipleOptions = true,
-    Flag            = "TargetParts",
-    Callback        = function(opts)
-        cfgSet("TargetParts", opts)
-        if _cfgApplying then return end
-        AimbotConfig.targetParts = opts
-        getgenv().targetParts = opts
+AimbotTab:CreateToggle({
+    Name = "aimbot enabled",
+    CurrentValue = LocalAimbotConfig.aimbotEnabled,
+    Flag = "AimbotEnabledToggle",
+    Callback = function(value)
+        LocalAimbotConfig.aimbotEnabled = value
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().aimbotEnabled = %s", tostring(value)))
+        end
     end,
 })
 
--- misc tab
-local proxConns = {}
-
-local function patchPrompt(pp)
-    if pp:IsA("ProximityPrompt") then pp.HoldDuration = 0 end
-end
-
-local function enableNoProx()
-    for _, v in ipairs(Workspace:GetDescendants()) do patchPrompt(v) end
-    proxConns[#proxConns+1] = Workspace.DescendantAdded:Connect(patchPrompt)
-end
-
-local function disableNoProx()
-    for _, c in ipairs(proxConns) do c:Disconnect() end
-    proxConns = {}
-end
-
-MiscTab:CreateToggle({
-    Name         = "Instant Proximity Prompts",
-    CurrentValue = cfgGet("NoProx", false),
-    Flag         = "NoProx",
-    Callback     = function(val)
-        cfgSet("NoProx", val)
-        if _cfgApplying then return end
-        if val then enableNoProx() else disableNoProx() end
+AimbotTab:CreateSlider({
+    Name = "hit chance",
+    Range = {0, 100},
+    Increment = 1,
+    Suffix = "%",
+    CurrentValue = LocalAimbotConfig.HitChance,
+    Flag = "HitChanceSlider",
+    Callback = function(value)
+        LocalAimbotConfig.HitChance = value
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().HitChance = %d", value))
+        end
     end,
 })
 
-local speedCfg = { enabled = false, multiplier = 1.0 }
-local _lastSpeed, _speedConn = nil, nil
+AimbotTab:CreateToggle({
+    Name = "wallcheck",
+    CurrentValue = LocalAimbotConfig.wallcheck,
+    Flag = "WallcheckToggle",
+    Callback = function(value)
+        LocalAimbotConfig.wallcheck = value
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().wallcheck = %s", tostring(value)))
+        end
+    end,
+})
 
-local function getHum()
-    local char = lp.Character
-    return char and char:FindFirstChildOfClass("Humanoid")
-end
+AimbotTab:CreateSlider({
+    Name = "fov radius",
+    Range = {0, 1000},
+    Increment = 1,
+    Suffix = "",
+    CurrentValue = LocalAimbotConfig.radius,
+    Flag = "FOVRadiusSlider",
+    Callback = function(value)
+        LocalAimbotConfig.radius = value
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().radius = %d", value))
+        end
+    end,
+})
 
-local function applySpeed(hum)
-    if not hum then return end
-    local cur  = hum.WalkSpeed
-    local base = (_lastSpeed and math.abs(cur - _lastSpeed) < 0.01)
-        and (_lastSpeed / speedCfg.multiplier)
-        or cur
-    _lastSpeed = base * speedCfg.multiplier
-    hum.WalkSpeed = _lastSpeed
-end
+AimbotTab:CreateToggle({
+    Name = "fov visible",
+    CurrentValue = LocalAimbotConfig.fovVisible,
+    Flag = "FOVVisibleToggle",
+    Callback = function(value)
+        LocalAimbotConfig.fovVisible = value
+    end,
+})
 
-local function hookSpeedChar(char)
-    local hum = char:WaitForChild("Humanoid", 5)
-    if not hum then return end
-    _lastSpeed = nil
-    applySpeed(hum)
-    if _speedConn then _speedConn:Disconnect() end
-    _speedConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-        if not speedCfg.enabled then return end
-        if _lastSpeed and math.abs(hum.WalkSpeed - _lastSpeed) < 0.01 then return end
-        applySpeed(hum)
+do
+    local circle = Drawing.new("Circle")
+    circle.Filled = false
+    circle.NumSides = 30
+    circle.Thickness = 2
+    circle.Color = Color3.new(1, 1, 1)
+    RunService.RenderStepped:Connect(function()
+        if circle and LocalAimbotConfig then
+            local viewportSize = Camera.ViewportSize
+            local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+            circle.Radius = LocalAimbotConfig.radius
+            circle.Position = screenCenter
+            circle.Visible = LocalAimbotConfig.fovVisible
+        end
     end)
 end
 
-local function enableSpeed()
-    if lp.Character then task.spawn(hookSpeedChar, lp.Character) end
+local function CheckFFlagValue(Name, Value)
+    local Success, Result = pcall(getfflag, Name)
+    if not Success then return false end
+    if typeof(Result) == "boolean" then return Result end
+    if typeof(Result) == "string" then return Result == tostring(Value) end
+    return false
 end
 
-local function disableSpeed()
-    if _speedConn then _speedConn:Disconnect(); _speedConn = nil end
-    local hum = getHum()
-    if hum and _lastSpeed then hum.WalkSpeed = _lastSpeed / speedCfg.multiplier end
-    _lastSpeed = nil
+local function LoadAimbotScript()
+    local targetPartsString = "{"
+    for i, p in ipairs(LocalAimbotConfig.TargetParts) do
+        targetPartsString = targetPartsString .. '"' .. p .. '"' .. (i == #LocalAimbotConfig.TargetParts and "" or ", ")
+    end
+    targetPartsString = targetPartsString .. "}"
+    local code = string.format([=[
+if getgenv().HitChance == nil then getgenv().HitChance = %d end
+if getgenv().wallcheck == nil then getgenv().wallcheck = %s end
+if getgenv().TargetParts == nil then getgenv().TargetParts = %s end
+if getgenv().radius == nil then getgenv().radius = %d end
+if getgenv().aimbotEnabled == nil then getgenv().aimbotEnabled = %s end
+if getgenv().fovVisible == nil then getgenv().fovVisible = %s end
+if getgenv().validAimbotTargets == nil then getgenv().validAimbotTargets = {} end
+local Players = cloneref(game:GetService("Players"))
+local RunService = cloneref(game:GetService("RunService"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local Gun_utls = ReplicatedStorage:WaitForChild("gun_res", 30)
+local gun_lib = Gun_utls:WaitForChild("lib", 30)
+local projectileHandlerMod = gun_lib:WaitForChild("projectileHandler", 30)
+local FastCast = require(projectileHandlerMod:WaitForChild("FastCastRedux", 30))
+local Camera = Workspace.CurrentCamera
+local Bin
+do
+Bin = setmetatable({}, {__tostring = function() return "Bin" end})
+Bin.__index = Bin
+function Bin.new(...) local self = setmetatable({}, Bin) return self:constructor(...) or self end
+function Bin:constructor() end
+function Bin:add(item)
+local node = {item = item}
+if self.head == nil then self.head = node end
+if self.tail then self.tail.next = node end
+self.tail = node
+return item
 end
-
-lp.CharacterAdded:Connect(function(char)
-    if speedCfg.enabled then task.wait(0.3); hookSpeedChar(char) end
+function Bin:batch(...)
+local args = {...}
+for _, item in args do
+local node = {item = item}
+if self.head == nil then self.head = node end
+if self.tail then self.tail.next = node end
+self.tail = node
+end
+return args
+end
+function Bin:destroy()
+while self.head do
+local item = self.head.item
+if type(item) == "function" then item()
+elseif typeof(item) == "RBXScriptConnection" then item:Disconnect()
+elseif type(item) == "thread" then task.cancel(item)
+elseif item.destroy ~= nil then item:destroy()
+elseif item.Destroy ~= nil then item:Destroy()
+end
+self.head = self.head.next
+end
+end
+function Bin:isEmpty() return self.head == nil end
+end
+local BaseComponent
+do
+BaseComponent = setmetatable({}, {__tostring = function() return "BaseComponent" end})
+BaseComponent.__index = BaseComponent
+function BaseComponent.new(...) local self = setmetatable({}, BaseComponent) return self:constructor(...) or self end
+function BaseComponent:constructor(instance) self.instance = instance self.bin = Bin.new() end
+function BaseComponent:destroy() self.bin:destroy() end
+end
+local RigComponent
+do
+local super = BaseComponent
+RigComponent = setmetatable({}, {__tostring = function() return "RigComponent" end, __index = super})
+RigComponent.__index = RigComponent
+function RigComponent.new(...) local self = setmetatable({}, RigComponent) return self:constructor(...) or self end
+function RigComponent:constructor(instance)
+super.constructor(self, instance)
+local root = instance:WaitForChild("HumanoidRootPart")
+if root == nil then error("Root part not found") end
+local head = instance:WaitForChild("Head")
+if head == nil then error("Head not found") end
+local humanoid = instance:WaitForChild("Humanoid")
+if humanoid == nil then error("Humanoid not found") end
+self.root = root self.head = head self.humanoid = humanoid
+local bin = self.bin
+bin:batch(humanoid.Died:Connect(function() return self:destroy() end), instance.Destroying:Connect(function() return self:destroy() end))
+end
+end
+local CharacterComponent
+do
+local super = RigComponent
+CharacterComponent = setmetatable({}, {__tostring = function() return "CharacterComponent" end, __index = super})
+CharacterComponent.__index = CharacterComponent
+function CharacterComponent.new(...) local self = setmetatable({}, CharacterComponent) return self:constructor(...) or self end
+function CharacterComponent:constructor(instance) super.constructor(self, instance) end
+CharacterComponent.active = {}
+end
+local PlayerComponent
+do
+local super = BaseComponent
+PlayerComponent = setmetatable({}, {__tostring = function() return "PlayerComponent" end, __index = super})
+PlayerComponent.__index = PlayerComponent
+function PlayerComponent.new(...) local self = setmetatable({}, PlayerComponent) return self:constructor(...) or self end
+function PlayerComponent:constructor(instance)
+super.constructor(self, instance)
+self.name = self.instance.Name
+local character = instance.Character
+if character then task.spawn(function() return self:onCharacterAdded(character) end) end
+local bin = self.bin
+bin:batch(instance.CharacterAdded:Connect(function(character) return self:onCharacterAdded(character) end), instance.CharacterRemoving:Connect(function() return self:onCharacterRemoving() end))
+bin:add(function() PlayerComponent.active[instance] = nil end)
+PlayerComponent.active[instance] = self
+end
+function PlayerComponent:onCharacterAdded(character)
+local _result = self.character if _result ~= nil then _result:destroy() end
+self.character = CharacterComponent.new(character)
+end
+function PlayerComponent:onCharacterRemoving()
+local _result = self.character if _result ~= nil then _result:destroy() end
+self.character = nil
+end
+function PlayerComponent:getName() return self.name end
+function PlayerComponent:getCharacter() return self.character end
+PlayerComponent.active = {}
+end
+local ComponentController = {}
+do
+local _container = ComponentController
+local rayParams
+local onPlayerAdded = function(instance) PlayerComponent.new(instance) end
+local getRandomPart = function(character)
+local currentTargetParts = getgenv().TargetParts
+local parts = {}
+for _, partName in ipairs(currentTargetParts) do
+local p = character.instance:FindFirstChild(partName)
+if p then table.insert(parts, p) end
+end
+if #parts == 0 then return nil end
+return parts[Random.new():NextInteger(1, #parts)]
+end
+local function getTarget()
+local list = PlayerComponent.active
+local viewportSize = Camera.ViewportSize
+local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+local bestTarget local bestPart local weight = -math.huge
+local _callback = function(component)
+if getgenv().validAimbotTargets[component:getName()] == nil then return nil end
+local character = component:getCharacter()
+if character == nil then return nil end
+local targetPart = getRandomPart(character)
+if targetPart == nil then return nil end
+local position = character.root.Position
+local viewportPoint = Camera:WorldToViewportPoint(position)
+if viewportPoint.Z < 0 then return nil end
+if getgenv().wallcheck then
+local origin = Camera.CFrame.Position
+rayParams.FilterDescendantsInstances = {character.instance, LocalPlayer.Character}
+local result = Workspace:Raycast(origin, position - origin, rayParams)
+if result then return nil end
+end
+local screenDistance = (Vector2.new(viewportPoint.X, viewportPoint.Y) - screenCenter).Magnitude
+if screenDistance > getgenv().radius then return nil end
+local prio = 1e3 - screenDistance
+if prio > weight then bestTarget = character bestPart = targetPart weight = prio end
+end
+for _k, _v in pairs(list) do _callback(_v, _k, list) end
+return bestTarget, bestPart
+end
+_container.getTarget = getTarget
+local function __init()
+local _exp = Players:GetPlayers()
+for _k, _v in ipairs(_exp) do
+if _v ~= LocalPlayer then task.spawn(onPlayerAdded, _v) end
+end
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(function(instance)
+local _result = PlayerComponent.active[instance]
+if _result ~= nil then _result:destroy() end
+PlayerComponent.active[instance] = nil
 end)
+rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+end
+_container.__init = __init
+end
+local RangeController = {}
+do
+local _container = RangeController
+local calculateChance = function(Percentage)
+Percentage = math.floor(Percentage)
+local random = Random.new()
+local chance = math.floor(random:NextNumber(0, 1) * 100) / 100
+return chance <= Percentage / 100
+end
+local getTarget = ComponentController.getTarget
+local function __init()
+local oldFire = FastCast.Fire
+FastCast.Fire = function(_table, origin, direction, velocity, FastCastBehaviour)
+local target, targetPart = getTarget()
+local chance = calculateChance(getgenv().HitChance)
+if getgenv().aimbotEnabled and target and targetPart and chance then
+local newDirection = (targetPart.Position - origin).Unit * 1000
+direction = newDirection
+velocity = newDirection * 9e9
+end
+return oldFire(_table, origin, direction, velocity, FastCastBehaviour)
+end
+end
+_container.__init = __init
+end
+local CameraController = {}
+do
+local _container = CameraController
+local function __init()
+Camera = Workspace.CurrentCamera
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+Camera = Workspace.CurrentCamera or Camera
+end)
+end
+_container.__init = __init
+end
+ComponentController.__init()
+RangeController.__init()
+CameraController.__init()
+    ]=],
+    LocalAimbotConfig.HitChance,
+    tostring(LocalAimbotConfig.wallcheck),
+    targetPartsString,
+    LocalAimbotConfig.radius,
+    tostring(LocalAimbotConfig.aimbotEnabled),
+    tostring(LocalAimbotConfig.fovVisible)
+    )
+    return code
+end
 
-MiscTab:CreateToggle({
-    Name         = "Speed Boost",
-    CurrentValue = cfgGet("SpeedEnabled", false),
-    Flag         = "SpeedEnabled",
-    Callback     = function(val)
-        cfgSet("SpeedEnabled", val)
-        if _cfgApplying then return end
-        speedCfg.enabled = val
-        if val then enableSpeed() else disableSpeed() end
-    end,
-})
+local function tableContains(tbl, value)
+    for _, v in ipairs(tbl) do
+        if v == value then return true end
+    end
+    return false
+end
+
+local MiscTab = Window:CreateTab("Misc", 4483345998)
+
+local defaultWalkSpeed = 16
+local speedMultiplier = 1.00
 
 MiscTab:CreateSlider({
-    Name         = "Speed Multiplier",
-    Range        = {100, 120},
-    Increment    = 1,
-    Suffix       = "%",
-    CurrentValue = cfgGet("SpeedMult", 100),
-    Flag         = "SpeedMult",
-    Callback     = function(val)
-        cfgSet("SpeedMult", val)
-        if _cfgApplying then return end
-        local old = speedCfg.multiplier
-        speedCfg.multiplier = val / 100
-        if speedCfg.enabled then
-            local hum = getHum()
-            if hum and _lastSpeed then
-                local base = _lastSpeed / old
-                _lastSpeed = base * speedCfg.multiplier
-                hum.WalkSpeed = _lastSpeed
-            end
+    Name = "speed multiplier",
+    Range = {100, 150},
+    Increment = 1,
+    Suffix = "%",
+    CurrentValue = 100,
+    Flag = "SpeedSlider",
+    Callback = function(val)
+        speedMultiplier = val / 100
+        local char = Players.LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = defaultWalkSpeed * speedMultiplier end
         end
     end,
 })
 
-
-
--- item esp
-local itemESPEnabled   = false
-local droppedGunConns  = {}
-local meleeConns       = {}
-local meleeWatchConn   = nil
-
-local DROPPED_COLOR = Color3.fromRGB(255, 220, 0)
-local MELEE_COLOR   = Color3.fromRGB(255, 100, 50)
-
-local function addHighlight(instance, color, parent)
-    local existing = instance:FindFirstChild("_ADCHighlight")
-    if existing then existing:Destroy() end
-    local hl = Instance.new("Highlight")
-    hl.Name                = "_ADCHighlight"
-    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.FillColor           = color
-    hl.OutlineColor        = color
-    hl.FillTransparency    = 0.4
-    hl.OutlineTransparency = 0
-    hl.Adornee             = instance
-    hl.Parent              = parent or instance
-end
-
-local function removeHighlight(instance)
-    local hl = instance:FindFirstChild("_ADCHighlight")
-    if hl then hl:Destroy() end
-end
-
--- dropped guns: Tools directly in BloodFolder
-local function addDroppedGunESP(tool)
-    if not tool:IsA("Tool") then return end
-    addHighlight(tool, DROPPED_COLOR, tool)
-    if not droppedGunConns[tool] then
-        droppedGunConns[tool] = tool.AncestryChanged:Connect(function()
-            if not tool.Parent then
-                removeHighlight(tool)
-                if droppedGunConns[tool] then
-                    droppedGunConns[tool]:Disconnect()
-                    droppedGunConns[tool] = nil
-                end
-            end
-        end)
-    end
-end
-
-local function clearDroppedGunESP(tool)
-    removeHighlight(tool)
-    if droppedGunConns[tool] then
-        droppedGunConns[tool]:Disconnect()
-        droppedGunConns[tool] = nil
-    end
-end
-
-local function enableDroppedGunESP()
-    if not BloodFolder then return end
-    for _, obj in ipairs(BloodFolder:GetChildren()) do
-        if obj:IsA("Tool") then addDroppedGunESP(obj) end
-    end
-    droppedGunConns["__added"] = BloodFolder.ChildAdded:Connect(function(obj)
-        if itemESPEnabled and obj:IsA("Tool") then addDroppedGunESP(obj) end
-    end)
-end
-
-local function disableDroppedGunESP()
-    if BloodFolder then
-        for _, obj in ipairs(BloodFolder:GetChildren()) do
-            if obj:IsA("Tool") then removeHighlight(obj) end
-        end
-    end
-    for k, conn in pairs(droppedGunConns) do
-        if type(conn) ~= "string" and conn.Connected then conn:Disconnect() end
-        droppedGunConns[k] = nil
-    end
-end
-
--- melee esp: BloodFolder.[mapfolder].Melees.*
-local function addMeleeESP(item)
-    addHighlight(item, MELEE_COLOR, item)
-    if not meleeConns[item] then
-        meleeConns[item] = item.AncestryChanged:Connect(function()
-            if not item.Parent then
-                removeHighlight(item)
-                if meleeConns[item] then
-                    meleeConns[item]:Disconnect()
-                    meleeConns[item] = nil
-                end
-            end
-        end)
-    end
-end
-
-local function scanMeleeFolder(meleeFolder)
-    for _, item in ipairs(meleeFolder:GetChildren()) do
-        addMeleeESP(item)
-    end
-    meleeFolder.ChildAdded:Connect(function(item)
-        if itemESPEnabled then addMeleeESP(item) end
-    end)
-end
-
-local function scanMapFolder(mapFolder)
-    local melees = mapFolder:FindFirstChild("Melees")
-    if melees then scanMeleeFolder(melees) end
-    mapFolder.ChildAdded:Connect(function(child)
-        if itemESPEnabled and child.Name == "Melees" then
-            scanMeleeFolder(child)
-        end
-    end)
-end
-
-local function enableMeleeESP()
-    if not BloodFolder then return end
-    for _, mapFolder in ipairs(BloodFolder:GetChildren()) do
-        if mapFolder:IsA("Folder") then scanMapFolder(mapFolder) end
-    end
-    meleeWatchConn = BloodFolder.ChildAdded:Connect(function(child)
-        if itemESPEnabled and child:IsA("Folder") then
-            task.wait(0.1)
-            scanMapFolder(child)
-        end
-    end)
-end
-
-local function disableMeleeESP()
-    for item, conn in pairs(meleeConns) do
-        removeHighlight(item)
-        if conn and conn.Connected then conn:Disconnect() end
-        meleeConns[item] = nil
-    end
-    if meleeWatchConn then meleeWatchConn:Disconnect(); meleeWatchConn = nil end
-end
-
-local function enableAllItemESP()
-    enableDroppedGunESP()
-    enableMeleeESP()
-end
-
-local function disableAllItemESP()
-    disableDroppedGunESP()
-    disableMeleeESP()
-end
-
-ItemESPTab:CreateToggle({
-    Name         = "Enable Item ESP",
-    CurrentValue = cfgGet("ItemESPEnabled", false),
-    Flag         = "ItemESPEnabled",
-    Callback     = function(val)
-        cfgSet("ItemESPEnabled", val)
-        if _cfgApplying then return end
-        itemESPEnabled = val
-        if val then enableAllItemESP() else disableAllItemESP() end
-    end,
-})
-
--- apply saved config after 1s
-task.delay(1, function()
-    _cfgApplying = false
-
-    espColors.killer    = COLOR_PRESETS[cfgGet("KillerColor",    "Red")]   or COLOR_PRESETS["Red"]
-    espColors.vigilante = COLOR_PRESETS[cfgGet("VigilanteColor", "Blue")]  or COLOR_PRESETS["Blue"]
-    espColors.innocent  = COLOR_PRESETS[cfgGet("InnocentColor",  "Green")] or COLOR_PRESETS["Green"]
-
-    if cfgGet("ESPEnabled", false) then
-        espEnabled = true
-        enableAllESP()
-    end
-
-    AimbotConfig.hitChance   = cfgGet("HitChance", 100)
-    AimbotConfig.fov         = cfgGet("FOVRadius", 300)
-    AimbotConfig.fovVisible  = cfgGet("FOVVisible", true)
-    AimbotConfig.wallCheck   = cfgGet("WallCheck", false)
-    local savedParts = cfgGet("TargetParts", {"Head","Torso","HumanoidRootPart"})
-    AimbotConfig.targetParts = type(savedParts) == "table" and savedParts or {"Head","Torso","HumanoidRootPart"}
-    local savedRoles = cfgGet("TargetRoles", {"Killer"})
-    AimbotConfig.targets = type(savedRoles) == "table" and savedRoles or {"Killer"}
-
-    getgenv().hitChance     = AimbotConfig.hitChance
-    getgenv().radius        = AimbotConfig.fov
-    getgenv().wallCheck     = AimbotConfig.wallCheck
-    getgenv().targetParts   = AimbotConfig.targetParts
-    getgenv().validTargets  = getgenv().validTargets or {}
-
-    if cfgGet("AimbotEnabled", false) then
-        AimbotConfig.enabled    = true
-        getgenv().aimbotEnabled = true
-    end
-
-    if cfgGet("ItemESPEnabled", false) then
-        itemESPEnabled = true
-        enableAllItemESP()
-    end
-
-    if cfgGet("NoProx", false) then enableNoProx() end
-
-    speedCfg.multiplier = cfgGet("SpeedMult", 100) / 100
-    -- re-fetch BloodFolder in case it wasn't loaded yet
-    if not BloodFolder then BloodFolder = Workspace:FindFirstChild("BloodFolder") end
-
-    if cfgGet("SpeedEnabled", false) then
-        speedCfg.enabled = true
-        enableSpeed()
+Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    if hum then
+        task.wait(0.1)
+        hum.WalkSpeed = defaultWalkSpeed * speedMultiplier
     end
 end)
+
+MiscTab:CreateButton({
+    Name = "reset speed",
+    Callback = function()
+        speedMultiplier = 1.00
+        local char = Players.LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = defaultWalkSpeed end
+        end
+        Rayfield:Notify({
+            Title = "speed reset",
+            Content = "walkspeed back to normal",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
+
+task.spawn(function()
+    connectHintTextSignal()
+    while true do
+        detectRoles()
+
+        local validTargetNames = {}
+        for player, data in pairs(playerRoles) do
+            if data then
+                local shouldTarget = false
+                if tableContains(bulletRedirectionModes, "Killer") then
+                    if data.label == killerLabel or data.label == killerHintLabel then
+                        shouldTarget = true
+                    end
+                end
+                if tableContains(bulletRedirectionModes, "Vigilante") then
+                    if data.label == vigilanteLabel or data.label == vigilanteHintLabel then
+                        shouldTarget = true
+                    end
+                end
+                if tableContains(bulletRedirectionModes, "Innocent") then
+                    if data.label == innocentLabel or data.label == hintMatchLabel then
+                        shouldTarget = true
+                    end
+                end
+                if shouldTarget then
+                    validTargetNames[player.Name] = true
+                end
+            end
+        end
+
+        local namesString = "{"
+        for name, _ in pairs(validTargetNames) do
+            namesString = namesString .. '["' .. name .. '"]=true,'
+        end
+        namesString = namesString .. "}"
+
+        if AimbotActor then
+            run(AimbotActor, string.format("getgenv().validAimbotTargets = %s", namesString))
+        end
+
+        task.wait(0.5)
+    end
+end)
+
+if AimbotActor then
+    if CheckFFlagValue("DebugRunParallelLuaOnMainThread", true) then
+        loadstring(LoadAimbotScript())()
+    else
+        run(AimbotActor, LoadAimbotScript())
+    end
+else
+    warn("aimbot couldnt load, no actor threads found")
+end
