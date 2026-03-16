@@ -10,7 +10,7 @@ local Window = Rayfield:CreateWindow({
     DisableBuildWarnings = true,
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = ADC,
+        FolderName = "ADC",
         FileName = "ADCBloodDebtConfig"
     }
 })
