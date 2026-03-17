@@ -25,6 +25,11 @@ local Window = Rayfield:CreateWindow({
     }
 })
 
+if not Window then
+    warn("window came back nil, key was probably cancelled or rayfield had an issue")
+    return
+end
+
 local Tab = Window:CreateTab("Players", 4483345998)
 
 local nametagMode = "Role"
@@ -665,7 +670,8 @@ local function updateMatchingHintPlayers()
                             if configObject then
                                 for _, configChild in ipairs(configObject:GetChildren()) do
                                     if configChild:IsA("StringValue") and configChild.Value == condition.value then
-                                        conditionMet = true break
+                                        conditionMet = true
+                                        break
                                     end
                                 end
                             end
@@ -1187,7 +1193,6 @@ MiscTab:CreateButton({
     end,
 })
 
--- main loop
 task.spawn(function()
     connectHintTextSignal()
     while true do
@@ -1215,7 +1220,6 @@ task.spawn(function()
     end
 end)
 
--- new silent aim using rep.bullet hook
 task.spawn(function()
     local cloneref = cloneref or function(i) return i end
     local clonefunction = clonefunction or function(f) return f end
