@@ -658,9 +658,7 @@ local newcclosure   = newcclosure or clonefunction
 
 local RS      = cloneref(game:GetService("ReplicatedStorage"))
 local Players = cloneref(game:GetService("Players"))
-local Workspace = game:GetService("Workspace")
-local lp      = Players.LocalPlayer
-local cam     = Workspace.CurrentCamera
+local plr     = Players.LocalPlayer
 
 if getgenv().aimbotEnabled == nil then getgenv().aimbotEnabled = false end
 if getgenv().hitChance     == nil then getgenv().hitChance     = 100   end
@@ -668,108 +666,29 @@ if getgenv().wallcheck     == nil then getgenv().wallcheck     = false end
 if getgenv().radius        == nil then getgenv().radius        = 300   end
 if getgenv().validTargets  == nil then getgenv().validTargets  = {}    end
 
-local rp = RaycastParams.new()
-rp.FilterType  = Enum.RaycastFilterType.Exclude
-rp.IgnoreWater = true
+-- load the original getTarget from sneekygoober (runs on main thread context via loadstring)
+local getTargetBase = loadstring(game:HttpGet("https://raw.githubusercontent.com/sneekygoober/Blood-Debt-Silent-Aim-Script/refs/heads/main/getTarget.luau"))()(true)
 
-local function setupFilter(char)
-    if not char then return end
-    local bf = Workspace:FindFirstChild("BloodFolder")
-    local filter = {char}
-    if bf then
-        local function tryAdd(name)
-            local v = bf:FindFirstChild(name, true)
-            if v then filter[#filter+1] = v end
-        end
-        tryAdd("ALWAYSHERE"); tryAdd("CheckingWalking"); tryAdd("INVISBARRIERS")
-        tryAdd("Spawns"); tryAdd("TREES"); tryAdd("InvisibleWall"); tryAdd("Cleaning windows")
-        for _, v in ipairs(bf:GetDescendants()) do
-            if v.Name:lower():match("window", 1) then filter[#filter+1] = v end
-        end
-    end
-    rp.FilterDescendantsInstances = filter
-end
-
-setupFilter(lp.Character)
-lp.CharacterAdded:Connect(setupFilter)
-
-local function isSameTeam(char)
-    local myChar = lp.Character
-    if not myChar then return true end
-    if char:FindFirstChild("TEAM1") and myChar:FindFirstChild("TEAM1") then return true end
-    if char:FindFirstChild("TEAM2") and myChar:FindFirstChild("TEAM2") then return true end
-    local ct = char:GetAttribute("Team")
-    local mt = myChar:GetAttribute("Team")
-    if ct and mt and ct == mt then return true end
-    return false
-end
-
-local function isVisible(part, origin)
-    if not part then return false end
-    local result = Workspace:Raycast(origin, part.Position - origin, rp)
-    if not result then return true end
-    if result.Instance:IsDescendantOf(part.Parent) then return true end
-    return false
-end
-
+-- wrap it to add our role filtering on top
 local function getTarget(origin)
-    if not getgenv().aimbotEnabled then return nil end
-    local valid    = getgenv().validTargets
-    -- use screen center since UIS may not work in actor threads
-    local mousePos = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-    local bestPart, bestDist = nil, getgenv().radius
-
-    local npc = Workspace:FindFirstChild("NPCSFolder")
-    if not npc then return nil end
-
-    for _, char in ipairs(npc:GetChildren()) do
-        local skip = false
-        if char == lp.Character then skip = true end
-        if not skip and isSameTeam(char) then skip = true end
-        if not skip and not valid[char.Name] then skip = true end
-        if not skip and char:FindFirstChildOfClass("ForceField") then skip = true end
-        if not skip then
-            local hum = char:FindFirstChild("Humanoid")
-            if not hum or hum.Health <= 0 then skip = true end
-        end
-        if not skip then
-            local pt = char:FindFirstChild("PlayerThings")
-            if pt and pt:FindFirstChild("Downed") and pt.Downed.Value then skip = true end
-        end
-
-        if not skip then
-            local tPart = char:FindFirstChild("Head") or char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-            if tPart then
-                local pos, onScreen = cam:WorldToViewportPoint(tPart.Position)
-                if onScreen then
-                    local wallBlocked = false
-                    if getgenv().wallcheck then
-                        if not isVisible(tPart, origin) then
-                            local hrp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-                            if not hrp or not isVisible(hrp, origin) then
-                                wallBlocked = true
-                            end
-                        end
-                    end
-                    if not wallBlocked then
-                        local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
-                        if dist < bestDist then
-                            bestDist = dist
-                            bestPart = tPart
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    return bestPart
+    -- temporarily patch valid targets check by wrapping
+    local valid = getgenv().validTargets
+    local base = getTargetBase(origin)
+    if not base then return nil end
+    -- check if the character this part belongs to is a valid target
+    local char = base.Parent
+    if not char then return nil end
+    if not valid[char.Name] then return nil end
+    return base
 end
 
 local s, rep = pcall(require, RS.gun_res.lib.replicator)
 if not s or not rep then return end
+
 local bulletFn = rawget(rep, "bullet")
 if not bulletFn then return end
+
+print("ADC Hub: bullet fn loaded", bulletFn)
 
 local old; old = clonefunction(hookfunction(bulletFn, newcclosure(function(_, __, ___, ____, origin, endPoses, ...)
     if getgenv().aimbotEnabled and math.random(1, 100) <= getgenv().hitChance then
@@ -782,7 +701,7 @@ local old; old = clonefunction(hookfunction(bulletFn, newcclosure(function(_, __
 end)))
 
 if restorefunction and isfunctionhooked then
-    lp.CharacterRemoving:Once(function()
+    plr.CharacterRemoving:Once(function()
         if rep and rawget(rep, "bullet") and isfunctionhooked(rawget(rep, "bullet")) then
             restorefunction(rawget(rep, "bullet"))
         end
@@ -790,39 +709,63 @@ if restorefunction and isfunctionhooked then
 end
 ]]
 
--- inject payload into gun actor, retry until it sticks
+-- inject payload into gun actor - matches sneekygoober's injection method exactly
 local injectedActors = {}
 
-local function injectActor(gun)
-    if not run_on_actor then return end
-    local actor = gun:FindFirstChild("Actor")
-    if not actor then return end
-    if injectedActors[actor] then return end
+local function injectActor(char)
+    task.wait()
+    local gun = char:FindFirstChildOfClass("Tool")
+    if not gun then return end
+    local a = gun:FindFirstChild("Actor")
+    if not a then return end
+
+    if get_actors then
+        local ok, actors = pcall(get_actors)
+        if ok and actors then
+            local found = false
+            for _, v in next, actors do
+                if v == a then found = true; break end
+            end
+            if not found then return end
+        end
+    end
+
+    if injectedActors[a] then return end
 
     task.spawn(function()
         local retries = 0
         while retries < 100 do
-            if not actor.Parent then return end
-            local ok = pcall(run_on_actor, actor, PAYLOAD)
-            if ok then injectedActors[actor] = true; return end
+            if not a.Parent or not a:IsDescendantOf(char) then return end
+            local ok = pcall(run_on_actor, a, PAYLOAD)
+            if ok then
+                injectedActors[a] = true
+                print("ADC Hub: injected into", a:GetFullName())
+                break
+            end
             retries += 1
             task.wait(0.05)
+        end
+        if not injectedActors[a] then
+            warn("ADC Hub: failed to inject into", a:GetFullName())
         end
     end)
 end
 
+local charConn
 local function setupChar(char)
     table.clear(injectedActors)
-    local function checkTool(child)
-        if child.ClassName == "Tool" then
-            local actor = child:FindFirstChild("Actor")
-            if actor and actor:FindFirstChild("weap_cl") then
-                injectActor(child)
-            end
+    if charConn then charConn:Disconnect(); charConn = nil end
+
+    charConn = char.ChildAdded:Connect(function(child)
+        if child.ClassName == "Tool" and child:FindFirstChild("Actor") and child.Actor:FindFirstChild("weap_cl") then
+            injectActor(char)
         end
+    end)
+
+    local existing = char:FindFirstChildOfClass("Tool")
+    if existing and existing:FindFirstChild("Actor") and existing.Actor:FindFirstChild("weap_cl") then
+        injectActor(char)
     end
-    char.ChildAdded:Connect(checkTool)
-    for _, child in ipairs(char:GetChildren()) do checkTool(child) end
 end
 
 if lp.Character then setupChar(lp.Character) end
@@ -1063,12 +1006,10 @@ AutoAimTab:CreateDropdown({
 
 
 -- mobile floating button
-local CoreGui = game:GetService("CoreGui")
-
 local autoAimGui        = Instance.new("ScreenGui")
 autoAimGui.Name         = "ADCAutoAimBtn"
 autoAimGui.ResetOnSpawn = false
-autoAimGui.Enabled      = false
+autoAimGui.Enabled      = true
 autoAimGui.Parent       = CoreGui
 
 local autoAimBtn                    = Instance.new("TextButton")
@@ -1077,10 +1018,10 @@ autoAimBtn.Position                 = UDim2.new(0.08, 0, 0.65, 0)
 autoAimBtn.BackgroundColor3         = Color3.fromRGB(30, 30, 30)
 autoAimBtn.BackgroundTransparency   = 0.3
 autoAimBtn.TextColor3               = Color3.new(1, 1, 1)
-autoAimBtn.Text                     = "AIM
-OFF"
+autoAimBtn.Text                     = "AIM\nOFF"
 autoAimBtn.TextScaled               = true
 autoAimBtn.Font                     = Enum.Font.GothamBold
+autoAimBtn.Visible                  = false
 autoAimBtn.Parent                   = autoAimGui
 
 local corner = Instance.new("UICorner")
@@ -1115,9 +1056,7 @@ end
 
 local function updateBtn()
     local on = AutoAimCfg.enabled
-    autoAimBtn.Text             = on and "AIM
-ON" or "AIM
-OFF"
+    autoAimBtn.Text             = on and "AIM\nON" or "AIM\nOFF"
     autoAimBtn.BackgroundColor3 = on and Color3.fromRGB(220, 50, 50) or Color3.fromRGB(30, 30, 30)
 end
 
@@ -1129,7 +1068,7 @@ end)
 AutoAimTab:CreateButton({
     Name     = "Spawn Mobile Button",
     Callback = function()
-        autoAimGui.Enabled = not autoAimGui.Enabled
+        autoAimBtn.Visible = not autoAimBtn.Visible
     end,
 })
 
@@ -1425,3 +1364,4 @@ task.delay(1, function()
         enableSpeed()
     end
 end)
+
