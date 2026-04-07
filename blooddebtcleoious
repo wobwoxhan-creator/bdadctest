@@ -1,0 +1,214 @@
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local RS         = game:GetService("ReplicatedStorage")
+
+local lp  = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+
+local saEnabled  = false
+local saFOVPct   = 0.25
+local saShowFOV  = false
+local saPart     = "HumanoidRootPart"
+local saWallPrio = false
+
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name           = "SAFovGui"
+fovGui.ResetOnSpawn   = false
+fovGui.IgnoreGuiInset = true
+fovGui.Parent         = game:GetService("CoreGui")
+
+local fovFrame = Instance.new("Frame")
+fovFrame.BackgroundTransparency = 1
+fovFrame.BorderSizePixel        = 0
+fovFrame.Visible                = false
+fovFrame.Parent                 = fovGui
+
+Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Color        = Color3.fromRGB(255, 255, 255)
+fovStroke.Thickness    = 1.5
+fovStroke.Transparency = 0
+fovStroke.Parent       = fovFrame
+
+local function getScreenRadius()
+    local vp = cam.ViewportSize
+    return math.sqrt(vp.X^2 + vp.Y^2) / 2 * saFOVPct
+end
+
+RunService.RenderStepped:Connect(function()
+    local vp = cam.ViewportSize
+    local r  = getScreenRadius()
+    fovFrame.Size     = UDim2.new(0, r * 2, 0, r * 2)
+    fovFrame.Position = UDim2.new(0, vp.X / 2 - r, 0, vp.Y / 2 - r)
+    fovFrame.Visible  = saShowFOV
+end)
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType  = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+
+local function isVisible(part)
+    local char    = part.Parent
+    local lpChar  = lp.Character
+    local exclude = { char }
+    if lpChar then exclude[#exclude + 1] = lpChar end
+    for _, v in ipairs(char:GetDescendants()) do
+        if v:IsA("BasePart") and not v.CanCollide then
+            exclude[#exclude + 1] = v
+        end
+    end
+    rayParams.FilterDescendantsInstances = exclude
+    local origin = cam.CFrame.Position
+    local result = workspace:Raycast(origin, part.Position - origin, rayParams)
+    return result == nil
+end
+
+local function getTarget()
+    local vp     = cam.ViewportSize
+    local cx     = vp.X / 2
+    local cy     = vp.Y / 2
+    local radius = getScreenRadius()
+    local candidates = {}
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == lp then continue end
+        local char = p.Character
+        if not char then continue end
+        local part = char:FindFirstChild(saPart)
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not part or not hum or hum.Health <= 0 then continue end
+
+        local sp, vis = cam:WorldToViewportPoint(part.Position)
+        if not vis then continue end
+
+        local d = math.sqrt((sp.X - cx)^2 + (sp.Y - cy)^2)
+        if d > radius then continue end
+
+        candidates[#candidates + 1] = { part = part, dist = d }
+    end
+
+    if #candidates == 0 then return nil end
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+
+    if saWallPrio then
+        for _, c in ipairs(candidates) do
+            if isVisible(c.part) then return c.part end
+        end
+    end
+
+    return candidates[1].part
+end
+
+local function tryPatch(module)
+    local ok, FC = pcall(require, module)
+    if not ok or type(FC) ~= "table" or type(FC.Fire) ~= "function" then
+        return false
+    end
+
+    local oldFire = FC.Fire
+    FC.Fire = function(tbl, origin, direction, velocity, behaviour)
+        if saEnabled then
+            local target = getTarget()
+            if target then
+                local newDir = (target.Position - origin).Unit * 1000
+                direction    = newDir
+                velocity     = newDir * 9e9
+            end
+        end
+        return oldFire(tbl, origin, direction, velocity, behaviour)
+    end
+
+    return true
+end
+
+task.defer(function()
+    local paths = {
+        function()
+            local g = RS:FindFirstChild("gun_res")
+            if not g then return nil end
+            local lib = g:FindFirstChild("lib")
+            if not lib then return nil end
+            local ph = lib:FindFirstChild("projectileHandler")
+            if not ph then return nil end
+            return ph:FindFirstChild("FastCastRedux")
+        end,
+        function()
+            local m = RS:FindFirstChild("Modules")
+            if not m then return nil end
+            return m:FindFirstChild("FastCastRedux")
+        end,
+        function()
+            for _, v in ipairs(RS:GetDescendants()) do
+                if v:IsA("ModuleScript") and v.Name == "FastCastRedux" then
+                    return v
+                end
+            end
+        end,
+    }
+
+    for _, fn in ipairs(paths) do
+        local module = fn()
+        if module and tryPatch(module) then
+            break
+        end
+    end
+end)
+
+local Mossfield = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/cleoious/Mossfield/refs/heads/main/UILib"
+))()
+
+local Window = Mossfield:CreateWindow({
+    Title     = "Blood Debt SA",
+    Size      = UDim2.new(0, 400, 0, 320),
+    ToggleKey = Enum.KeyCode.RightControl,
+    IconLabel = "SA",
+})
+
+local saTab = Window:AddTab({ Name = "Silent Aim" })
+
+saTab:AddToggle({
+    Name     = "Enable Silent Aim",
+    Default  = false,
+    Callback = function(v) saEnabled = v end,
+})
+
+saTab:AddToggle({
+    Name     = "Show FOV Circle",
+    Default  = false,
+    Callback = function(v) saShowFOV = v end,
+})
+
+saTab:AddToggle({
+    Name     = "Wall Check Priority",
+    Default  = false,
+    Callback = function(v) saWallPrio = v end,
+})
+
+saTab:AddSlider({
+    Name     = "FOV Size",
+    Min      = 1,
+    Max      = 100,
+    Default  = 25,
+    Suffix   = "%",
+    Callback = function(v) saFOVPct = v / 100 end,
+})
+
+saTab:AddDropdown({
+    Name     = "Target Part",
+    Options  = { "HumanoidRootPart", "Head", "Torso" },
+    Default  = "HumanoidRootPart",
+    Callback = function(v) saPart = v end,
+})
+
+saTab:AddSeparator({ Text = "FastCast Paths" })
+saTab:AddLabel({ Text = "gun_res.lib.projectileHandler.FastCastRedux" })
+saTab:AddLabel({ Text = "Modules.FastCastRedux" })
+
+Window:Notify({
+    Title       = "Blood Debt SA",
+    Description = "Loaded. Toggle: RightCtrl",
+    Type        = "success",
+    Duration    = 4,
+})
